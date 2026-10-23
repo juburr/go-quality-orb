@@ -1,0 +1,28 @@
+description: >
+  Check every module of a repository with several, such as a monorepo of
+  services with a go.work workspace: modules all finds each go.mod below
+  working_dir (skipping vendor and testdata), and every check runs in each,
+  with paths in the reports relative to working_dir.
+
+usage:
+  version: 2.1
+  orbs:
+    go-quality: juburr/go-quality-orb@0.1.0
+  jobs:
+    quality:
+      docker:
+        - image: cimg/go:1.27
+      steps:
+        - checkout
+        - go-quality/install
+        - go-quality/mod_tidy:
+            modules: all
+        - go-quality/lint:
+            modules: all
+        - go-quality/test:
+            modules: all
+            race: true
+  workflows:
+    quality:
+      jobs:
+        - quality

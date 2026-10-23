@@ -1,0 +1,34 @@
+description: >
+  Fuzz every fuzz test for five minutes each, in a nightly scheduled
+  pipeline, with Go's fuzz cache kept between runs so the corpus keeps
+  growing. A failing input is stored in the job's artifacts as
+  testdata/fuzz/<FuzzTest>/<file>, ready to commit as a regression test.
+
+usage:
+  version: 2.1
+  orbs:
+    go-quality: juburr/go-quality-orb@0.1.0
+  jobs:
+    fuzz:
+      docker:
+        - image: cimg/go:1.27
+      resource_class: large
+      steps:
+        - checkout
+        # Go keeps the inputs that found new coverage in $(go env GOCACHE)/fuzz,
+        # which is ~/.cache/go-build/fuzz on cimg/go.
+        - restore_cache:
+            keys:
+              - go-fuzz-corpus-v1-{{ .Branch }}-
+        - go-quality/fuzz:
+            fuzz_time: 5m
+            no_output_timeout: 30m
+        - save_cache:
+            key: go-fuzz-corpus-v1-{{ .Branch }}-{{ epoch }}
+            when: always
+            paths:
+              - ~/.cache/go-build/fuzz
+  workflows:
+    nightly-fuzz:
+      jobs:
+        - fuzz

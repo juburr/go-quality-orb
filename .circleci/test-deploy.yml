@@ -1,0 +1,487 @@
+version: 2.1
+orbs:
+  # Your orb will be automatically injected here during the pipeline.
+  # Reference your orb's jobs and commands below as they will exist when built.
+  orb-tools: circleci/orb-tools@12.5
+  # The orb definition is intentionally not included here. It will be injected into the pipeline.
+  go-quality-orb: {}
+
+# Use this tag to ensure test jobs always run,
+# even though the downstream publish job will only run on release tags.
+filters: &filters
+  tags:
+    only: /.*/
+
+# Filter for release tags.
+release-filters: &release-filters
+  branches:
+    ignore: /.*/
+  tags:
+    only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+# The fixtures: clean, which every check passes, and dirty, which every check finds something in.
+clean: &clean tests/fixtures/clean
+dirty: &dirty tests/fixtures/dirty
+
+jobs:
+  # Installs every tool on amd64, each reporting the install command's default version and
+  # matching its checksum table, then installs each again from the cache.
+  install-test:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - go-quality-orb/install:
+          tools: go golangci-lint gotestsum gofumpt benchstat
+      - run:
+          name: Verify Install
+          command: |
+            default() { yq ".parameters.${1//-/_}_version.default" src/commands/install.yml; }
+            [[ "$(command -v go)" == "${HOME}/sdk/go/bin/go" ]]
+            [[ "$(go env GOVERSION)" == "go$(default go)" ]]
+            [[ "$(go env GOROOT)" == "${HOME}/sdk/go" ]]
+            golangci-lint version | grep -qF "has version $(default golangci-lint) "
+            [[ "$(gotestsum --version)" == "gotestsum version v$(default gotestsum)"* ]]
+            [[ "$(gofumpt --version)" == "v$(default gofumpt) "* ]]
+            benchstat -h 2>&1 | grep -q '^Usage: benchstat'
+            # Each binary is the one its checksum table pins.
+            for tool in golangci-lint gotestsum gofumpt benchstat; do
+              entry=$(grep -F "[\"$(default "${tool}")/amd64\"]=" "src/install/${tool}/install.sh" | tail -n 1 | cut -d'"' -f4)
+              [[ "$(sha512sum "$(command -v "${tool}")" | awk '{ print $1 }')" == "${entry}" ]] || { echo "FAIL: ${tool} is not the pinned binary."; exit 1; }
+            done
+      - run:
+          name: Verify A Second Install Uses The Cache
+          command: |
+            for tool in go golangci-lint gotestsum gofumpt benchstat; do
+              version=$(yq ".parameters.${tool//-/_}_version.default" src/commands/install.yml)
+              install_path=""
+              PARAM_VERSION="${version}" PARAM_VERIFY_CHECKSUMS=strict PARAM_INSTALL_PATH="${install_path}" PARAM_CACHING=true \
+                PARAM_DOWNLOAD_BASE_URL="" bash "src/install/${tool}/install.sh" 2>&1 | tee "/tmp/${tool}-second-install.log"
+              grep -q "from the cache." "/tmp/${tool}-second-install.log"
+              if grep -q "^Downloading\|^Building" "/tmp/${tool}-second-install.log"; then
+                echo "FAIL: the second install of ${tool} downloaded or built it again."
+                exit 1
+              fi
+            done
+  # Runs the install scripts under the verify_checksums default declared in install.yml against
+  # real releases that have no checksum in the tables, and against a download_base_url mirror: a
+  # local HTTPS server serving first the real gotestsum release and then a tampered copy, which
+  # must be rejected.
+  checksum-test:
+    docker:
+      - image: cimg/python:3.13
+    environment:
+      UNLISTED_LINT: 2.9.0
+      UNLISTED_GOTESTSUM: 1.11.0
+    steps:
+      - checkout
+      - run:
+          name: Unlisted Versions Fail Closed By Default
+          command: |
+            REPO_DIR=$(pwd)
+            DEFAULT_MODE=$(yq '.parameters.verify_checksums.default' src/commands/install.yml)
+            echo "verify_checksums default: ${DEFAULT_MODE}"
+            for spec in "golangci-lint:${UNLISTED_LINT}" "gotestsum:${UNLISTED_GOTESTSUM}" "go:1.25.0"; do
+              tool=${spec%%:*}
+              version=${spec#*:}
+              cd "$(mktemp -d)" && mkdir bin
+              if HOME="$(pwd)" PARAM_INSTALL_PATH="$(pwd)/bin" PARAM_VERIFY_CHECKSUMS="${DEFAULT_MODE}" PARAM_VERSION="${version}" \
+                  PARAM_CACHING=true PARAM_DOWNLOAD_BASE_URL="" bash "${REPO_DIR}/src/install/${tool}/install.sh"; then
+                echo "FAIL: install succeeded for unlisted ${tool} ${version} under the default."
+                exit 1
+              fi
+              if [[ -n "$(ls -A bin)" || -n "$(ls -A | grep -vx bin)" ]]; then
+                echo "FAIL: install downloaded or installed ${tool} before rejecting the unlisted version."
+                ls -laR
+                exit 1
+              fi
+              echo "PASS: unlisted ${tool} ${version} failed closed before download."
+            done
+      - run:
+          name: known_versions Opt-Out Installs Unlisted Version
+          command: |
+            REPO_DIR=$(pwd)
+            cd "$(mktemp -d)" && mkdir bin
+            PARAM_INSTALL_PATH="$(pwd)/bin" PARAM_VERIFY_CHECKSUMS=known_versions PARAM_VERSION="${UNLISTED_GOTESTSUM}" \
+              PARAM_CACHING=false PARAM_DOWNLOAD_BASE_URL="" bash "${REPO_DIR}/src/install/gotestsum/install.sh" 2>&1 | tee install.log
+            grep -q "has no checksum for gotestsum ${UNLISTED_GOTESTSUM}" install.log
+            grep -q "UNVERIFIED" install.log
+            [[ "$(bin/gotestsum --version)" == "gotestsum version v${UNLISTED_GOTESTSUM}"* ]]
+      - run:
+          name: A Mirror Serving A Tampered Release Is Rejected
+          command: |
+            REPO_DIR=$(pwd)
+            VERSION=$(yq '.parameters.version.default' src/commands/install_gotestsum.yml)
+            ASSET="gotestsum_${VERSION}_linux_amd64.tar.gz"
+            MIRROR=$(mktemp -d)
+            DIR="${MIRROR}/www/gotestyourself/gotestsum/releases/download/v${VERSION}"
+            mkdir -p "${DIR}"
+            curl --fail --silent --show-error --location --proto '=https' --output "${DIR}/${ASSET}" \
+              "https://github.com/gotestyourself/gotestsum/releases/download/v${VERSION}/${ASSET}"
+            openssl req -x509 -newkey rsa:2048 -nodes -keyout "${MIRROR}/key.pem" -out "${MIRROR}/cert.pem" -days 1 \
+              -subj /CN=localhost -addext subjectAltName=DNS:localhost 2> /dev/null
+            cat > "${MIRROR}/serve.py" \<< 'EOF'
+            import functools, http.server, ssl, sys
+            handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+            server = http.server.HTTPServer(("127.0.0.1", 8443), handler)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(sys.argv[2], sys.argv[3])
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            server.serve_forever()
+            EOF
+            python3 "${MIRROR}/serve.py" "${MIRROR}/www" "${MIRROR}/cert.pem" "${MIRROR}/key.pem" > "${MIRROR}/serve.log" 2>&1 &
+            SERVER=$!
+            trap 'kill "${SERVER}"' EXIT
+            sleep 2
+            install_from_mirror() {
+              rm -rf "${MIRROR}/bin" && mkdir "${MIRROR}/bin"
+              CURL_CA_BUNDLE="${MIRROR}/cert.pem" PARAM_INSTALL_PATH="${MIRROR}/bin" PARAM_VERIFY_CHECKSUMS=strict \
+                PARAM_VERSION="${VERSION}" PARAM_CACHING=false PARAM_DOWNLOAD_BASE_URL=https://localhost:8443 \
+                bash "${REPO_DIR}/src/install/gotestsum/install.sh"
+            }
+            install_from_mirror 2>&1 | tee "${MIRROR}/good.log"
+            grep -q "Downloading https://localhost:8443/gotestyourself/gotestsum/releases/download/v${VERSION}/${ASSET}" "${MIRROR}/good.log"
+            [[ "$("${MIRROR}/bin/gotestsum" --version)" == "gotestsum version v${VERSION}"* ]]
+            printf 'tampered' >> "${DIR}/${ASSET}"
+            if install_from_mirror > "${MIRROR}/bad.log" 2>&1; then
+              cat "${MIRROR}/bad.log"
+              echo "FAIL: a tampered release from the mirror was installed."
+              exit 1
+            fi
+            cat "${MIRROR}/bad.log"
+            grep -q "download was rejected and not installed" "${MIRROR}/bad.log"
+            [[ ! -e "${MIRROR}/bin/gotestsum" ]]
+            echo "PASS: the tampered release was rejected."
+      - run:
+          name: install Refuses A Tool It Doesn't Know
+          command: |
+            if PARAM_TOOLS="golangci-lint gofmt" bash src/scripts/install_tools.sh; then
+              echo "FAIL: install accepted a tool it doesn't install."
+              exit 1
+            fi
+  # Installs every tool on an Arm machine, and runs the checks that run them.
+  arm64-test:
+    docker:
+      - image: cimg/go:1.27
+    resource_class: arm.medium
+    steps:
+      - checkout
+      - go-quality-orb/install:
+          tools: go golangci-lint gotestsum gofumpt benchstat
+      - run:
+          name: Verify arm64 Install
+          command: |
+            if [[ "$(uname -m)" != "aarch64" ]]; then
+              echo "FAIL: expected an aarch64 machine, got $(uname -m)."
+              exit 1
+            fi
+            for binary in "$(command -v go)" "$(command -v golangci-lint)" "$(command -v gotestsum)" "$(command -v gofumpt)" "$(command -v benchstat)"; do
+              machine=$(readelf --file-header "${binary}" | awk -F: '/Machine:/ { gsub(/^ +/, "", $2); print $2 }')
+              echo "${binary}: ${machine}"
+              if [[ "${machine}" != AArch64 ]]; then
+                echo "FAIL: ${binary} is not an arm64 build."
+                exit 1
+              fi
+            done
+            [[ "$(go env GOARCH)" == arm64 ]]
+      - go-quality-orb/lint:
+          working_dir: *clean
+          output_dir: /tmp/reports/arm64
+      - go-quality-orb/fmt:
+          working_dir: *clean
+          formatter: gofumpt
+          output_dir: /tmp/reports/arm64
+      - go-quality-orb/test:
+          working_dir: *clean
+          race: true
+          output_dir: /tmp/reports/arm64
+  # A machine executor without Go: install_go installs it, and the checks run with it.
+  machine-test:
+    machine:
+      image: ubuntu-2404:current
+    steps:
+      - checkout
+      - go-quality-orb/install:
+          tools: go golangci-lint gotestsum
+      - run:
+          name: Verify Go
+          command: |
+            [[ "$(command -v go)" == "${HOME}/sdk/go/bin/go" ]]
+            default=$(awk '/^  go_version:/ { p = 1 } p && /default:/ { gsub(/"/, "", $2); print $2; exit }' src/commands/install.yml)
+            [[ "$(go env GOVERSION)" == "go${default}" ]]
+      - go-quality-orb/vet:
+          working_dir: *clean
+          output_dir: /tmp/reports/machine
+      - go-quality-orb/lint:
+          working_dir: *clean
+          output_dir: /tmp/reports/machine
+      - go-quality-orb/test:
+          working_dir: *clean
+          race: true
+          output_dir: /tmp/reports/machine
+  # Every check passes on the clean fixture, with the real tools, and writes its reports.
+  checks-test:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - go-quality-orb/install:
+          tools: golangci-lint gotestsum gofumpt
+      - go-quality-orb/fmt:
+          working_dir: *clean
+          simplify: true
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/fmt:
+          working_dir: *clean
+          formatter: gofumpt
+          report_name: gofumpt
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/mod_tidy:
+          working_dir: *clean
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/vet:
+          working_dir: *clean
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/lint:
+          working_dir: *clean
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/generate_check:
+          working_dir: *clean
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/test:
+          working_dir: *clean
+          race: true
+          shuffle: "on"
+          coverage_min: "30"
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/fuzz:
+          working_dir: *clean
+          fuzz_time: 10s
+          output_dir: /tmp/reports/clean
+      - go-quality-orb/build:
+          working_dir: *clean
+          platforms: linux/amd64 linux/arm64 darwin/arm64 windows/amd64
+          output_dir: /tmp/reports/clean
+      - run:
+          name: Verify The Reports
+          command: |
+            cd /tmp/reports/clean
+            [[ ! -s gofmt.txt && ! -s gofumpt.txt && ! -s go-mod-tidy.diff && ! -s go-generate.txt ]]
+            jq -e 'length == 0' go-vet.json golangci-lint.json
+            jq -e '.version == "2.1.0" and (.runs | length) == 1' golangci-lint.sarif
+            for name in gofmt gofumpt go-mod-tidy go-vet golangci-lint go-generate go-fuzz go-build; do
+              grep -q '<testsuite ' "junit/${name}.xml"
+            done
+            grep -q '<testcase ' junit/go-test/junit.xml
+            grep -q '"Action":"pass"' go-test/events.json
+            grep -q '^total:' go-test/coverage.txt
+            [[ -s go-test/coverage.html ]]
+            awk '{ exit !($1 >= 30) }' go-test/coverage-total.txt
+            grep -q 'name="FuzzParse"' junit/go-fuzz.xml
+            [[ "$(grep -c '<testcase classname="."' junit/go-build.xml)" -eq 4 ]]
+            [[ -z "$(git -C ~/project status --porcelain)" ]] || { git -C ~/project status; echo "FAIL: a check changed the checkout."; exit 1; }
+  # Every check finds what is wrong with the dirty fixture: with report_only, it passes and writes
+  # the findings; by default, it fails. A tool that can't complete fails even with report_only.
+  findings-test:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - go-quality-orb/install:
+          tools: golangci-lint gotestsum gofumpt
+      - go-quality-orb/fmt:
+          working_dir: *dirty
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - go-quality-orb/mod_tidy:
+          working_dir: *dirty
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - go-quality-orb/vet:
+          working_dir: *dirty
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - go-quality-orb/lint:
+          working_dir: *dirty
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - go-quality-orb/fuzz:
+          working_dir: *dirty
+          fuzz_time: 60s
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - go-quality-orb/build:
+          working_dir: *dirty
+          platforms: linux/amd64 windows/amd64
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - go-quality-orb/generate_check:
+          working_dir: *dirty
+          report_only: true
+          output_dir: /tmp/reports/dirty
+      - run:
+          name: Verify report_only Reported The Findings
+          command: |
+            cd /tmp/reports/dirty
+            grep -qx parse/parse.go gofmt.txt
+            grep -q '^-golang.org/x/sync v0.10.0' go-mod-tidy.diff
+            jq -e 'any(.[]; .analyzer == "assign" and .position == "parse/parse.go:24:2")' go-vet.json
+            jq -e '[.[].FromLinter] | sort == ["errcheck", "govet"]' golangci-lint.json
+            jq -e '[.runs[].results[]] | length == 2' golangci-lint.sarif
+            grep -q 'FuzzParse' junit/go-fuzz.xml && grep -q '<failure' junit/go-fuzz.xml
+            ls go-fuzz/parse/testdata/fuzz/FuzzParse/
+            grep -q 'windows/amd64"><failure' junit/go-build.xml
+            grep -qx tests/fixtures/dirty/parse/version_gen.go go-generate.txt
+            git -C ~/project checkout -- tests/fixtures/dirty
+            git -C ~/project clean -fdq tests/fixtures/dirty
+      - run:
+          name: Verify The Checks Fail By Default
+          command: |
+            expect_failure() {
+              local says=$1
+              shift
+              if bash tests/run_command.sh "$@" > /tmp/run.log 2>&1; then
+                cat /tmp/run.log
+                echo "FAIL: $* passed."
+                exit 1
+              fi
+              cat /tmp/run.log
+              grep -qF -- "${says}" /tmp/run.log || { echo "FAIL: $* did not say: ${says}"; exit 1; }
+            }
+            expect_failure "ERROR: 1 Go file is not formatted with gofmt." fmt working_dir=tests/fixtures/dirty
+            expect_failure "is not formatted with gofumpt" fmt working_dir=tests/fixtures/dirty formatter=gofumpt
+            expect_failure "ERROR: go.mod or go.sum is not tidy in example.com/dirty." mod_tidy working_dir=tests/fixtures/dirty
+            expect_failure "ERROR: go vet found 1 problem in example.com/dirty." vet working_dir=tests/fixtures/dirty
+            expect_failure "ERROR: golangci-lint found 2 issues in example.com/dirty." lint working_dir=tests/fixtures/dirty
+            expect_failure "ERROR: The code doesn't build: example.com/dirty for windows/amd64." build working_dir=tests/fixtures/dirty platforms=windows/amd64
+            expect_failure "Tests failed, or packages didn't build, in example.com/dirty." test working_dir=tests/fixtures/dirty tags=failing
+            expect_failure "ERROR: go generate changed 1 file" generate_check working_dir=tests/fixtures/dirty
+            git checkout -- tests/fixtures/dirty
+            # Every module at once.
+            expect_failure "golangci-lint found 2 issues in example.com/clean (clean), example.com/dirty (dirty)." lint working_dir=tests/fixtures modules=all
+            # A tool that can't complete fails even with report_only.
+            printf 'package greet\n\nfunc broken() int { return "x" }\n' > tests/fixtures/clean/greet/broken.go
+            expect_failure "doesn't compile (golangci-lint's typecheck issues above)" lint working_dir=tests/fixtures/clean report_only=true
+            expect_failure "go vet could not complete in example.com/clean" vet working_dir=tests/fixtures/clean report_only=true
+            rm tests/fixtures/clean/greet/broken.go
+            printf 'linters:\n  enable-all: true\n' > /tmp/v1.yml
+            expect_failure "golangci-lint migrate converts a version 1 one" lint working_dir=tests/fixtures/clean config=/tmp/v1.yml report_only=true
+  # Go 1.22: mod_tidy refuses to run, since go mod tidy -diff arrived in 1.23, and go vet's JSON on
+  # stderr (before Go 1.26) is read. The fixtures, with their go line lowered to 1.22.
+  old-go-test:
+    docker:
+      - image: cimg/go:1.22
+    environment:
+      GOTOOLCHAIN: local
+    steps:
+      - checkout
+      - run:
+          name: Lower The Fixtures' go Line
+          command: sed -i 's/^go 1\.24$/go 1.22/' tests/fixtures/clean/go.mod tests/fixtures/dirty/go.mod
+      - go-quality-orb/install:
+          tools: gotestsum
+      - go-quality-orb/vet:
+          working_dir: *dirty
+          report_only: true
+          output_dir: /tmp/reports/old
+      - go-quality-orb/fmt:
+          working_dir: *clean
+          output_dir: /tmp/reports/old
+      - go-quality-orb/test:
+          working_dir: *clean
+          output_dir: /tmp/reports/old
+      - go-quality-orb/build:
+          working_dir: *clean
+          output_dir: /tmp/reports/old
+      - run:
+          name: Verify vet Read The Report From stderr, And mod_tidy Refuses Go 1.22
+          command: |
+            [[ "$(go env GOVERSION)" == go1.22.* ]]
+            jq -e 'any(.[]; .analyzer == "assign" and .position == "parse/parse.go:24:2")' /tmp/reports/old/go-vet.json
+            if bash tests/run_command.sh mod_tidy working_dir=tests/fixtures/clean > /tmp/run.log 2>&1; then
+              cat /tmp/run.log
+              echo "FAIL: mod_tidy ran on Go 1.22."
+              exit 1
+            fi
+            cat /tmp/run.log
+            grep -qF "mod_tidy needs Go 1.23 or newer, for go mod tidy -diff, and example.com/clean runs go1.22" /tmp/run.log
+  # Benchmarks: summarized on their own, compared with the same commit (no gate), and compared
+  # with a commit before a slowdown, which max_regression fails.
+  bench-test:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - go-quality-orb/install:
+          tools: benchstat
+      - go-quality-orb/bench:
+          working_dir: *clean
+          output_dir: /tmp/reports/bench
+      - go-quality-orb/bench:
+          working_dir: *clean
+          base_ref: HEAD
+          report_name: go-bench-same
+          output_dir: /tmp/reports/bench
+      - run:
+          name: Verify A Slowdown Fails max_regression
+          command: |
+            grep -q 'BenchmarkHello' /tmp/reports/bench/go-bench.txt
+            grep -q 'base' /tmp/reports/bench/go-bench-same.benchstat.txt
+            python3 - \<< 'EOF'
+            path = "tests/fixtures/clean/greet/greet.go"
+            source = open(path).read()
+            slow = 'out := ""\n\tfor i := 0; i < 50; i++ {\n\t\tout = strings.Repeat("Hello, "+name, 2)[:7+len(name)]\n\t}\n\treturn out'
+            open(path, "w").write(source.replace('return "Hello, " + name', slow))
+            EOF
+            git -c user.name=ci -c user.email=ci@example.com commit -q -am "slow down Hello"
+            if bash tests/run_command.sh bench working_dir=tests/fixtures/clean base_ref=HEAD~1 max_regression=10 \
+                output_dir=/tmp/reports/bench report_name=go-bench-slow > /tmp/run.log 2>&1; then
+              cat /tmp/run.log
+              echo "FAIL: a slowdown passed max_regression."
+              exit 1
+            fi
+            cat /tmp/run.log
+            grep -q 'Hello-[0-9]* sec/op +' /tmp/reports/bench/go-bench-slow.regressions.txt
+            [[ "$(git worktree list | wc -l)" -eq 1 ]]
+
+workflows:
+  test-deploy:
+    jobs:
+      # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
+      # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
+      - install-test:
+          filters: *filters
+      - checksum-test:
+          filters: *filters
+      - arm64-test:
+          filters: *filters
+      - machine-test:
+          filters: *filters
+      - checks-test:
+          filters: *filters
+      - findings-test:
+          filters: *filters
+      - old-go-test:
+          filters: *filters
+      - bench-test:
+          filters: *filters
+      # The orb must be re-packed for publishing, and saved to the workspace.
+      - orb-tools/pack:
+          filters: *release-filters
+      - orb-tools/publish:
+          orb_name: juburr/go-quality-orb
+          vcs_type: << pipeline.project.type >>
+          pub_type: production
+          # Ensure this job requires all test jobs and the pack job.
+          requires:
+            - orb-tools/pack
+            - install-test
+            - checksum-test
+            - arm64-test
+            - machine-test
+            - checks-test
+            - findings-test
+            - old-go-test
+            - bench-test
+          context: orb-publishing
+          filters: *release-filters

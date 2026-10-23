@@ -56,7 +56,7 @@ for module in "${GQ_MODULES[@]}"; do
     (cd "${module}" && go mod tidy -diff ${EXTRA[@]+"${EXTRA[@]}"}) > "${WORK}/out" 2> "${WORK}/err" || rc=$?
     if [[ "${rc}" -eq 0 ]]; then
         echo "  tidy"
-        CASES=$(jq -c --arg module "${module}" '. + [{classname: "go mod tidy", name: $module, status: "passed"}]' <<< "${CASES}")
+        CASES=$(jq -c --arg mod "${module}" '. + [{classname: "go mod tidy", name: $mod, status: "passed"}]' <<< "${CASES}")
         continue
     fi
     # Changes come as a unified diff on stdout; an error has none.
@@ -68,15 +68,15 @@ for module in "${GQ_MODULES[@]}"; do
             printf '# go mod tidy -diff in %s\n' "${module}"
             cat "${WORK}/out"
         } >> "${DIFF}"
-        CASES=$(jq -c --arg module "${module}" --rawfile diff "${WORK}/out" \
-            '. + [{classname: "go mod tidy", name: $module, status: "failed", message: "\($module)/go.mod or go.sum is not tidy", detail: $diff}]' <<< "${CASES}")
+        CASES=$(jq -c --arg mod "${module}" --rawfile diff "${WORK}/out" \
+            '. + [{classname: "go mod tidy", name: $mod, status: "failed", message: "\($mod)/go.mod or go.sum is not tidy", detail: $diff}]' <<< "${CASES}")
         continue
     fi
     ERRORS+=("${module}")
     echo "ERROR: go mod tidy -diff could not complete in $(gq_label "${module}") (exit code ${rc}). Its output:" >&2
     gq_tail "${WORK}/err"
-    CASES=$(jq -c --arg module "${module}" --rawfile log "${WORK}/err" \
-        '. + [{classname: "go mod tidy", name: $module, status: "failed", message: "go mod tidy -diff could not complete", detail: $log}]' <<< "${CASES}")
+    CASES=$(jq -c --arg mod "${module}" --rawfile log "${WORK}/err" \
+        '. + [{classname: "go mod tidy", name: $mod, status: "failed", message: "go mod tidy -diff could not complete", detail: $log}]' <<< "${CASES}")
 done
 if [[ "${JUNIT}" == true ]]; then
     gq_junit "${GQ_OUT}/junit/${PARAM_REPORT_NAME}.xml" "go mod tidy" "${CASES}"

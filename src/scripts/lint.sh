@@ -112,7 +112,7 @@ for module in "${GQ_MODULES[@]}"; do
         echo "ERROR: golangci-lint logged an error in $(gq_label "${module}") (level=error above), so it did not check everything." >&2
         continue
     fi
-    if [[ ! -s "${WORK}/out.json" ]] || ! jq -c --arg module "${module}" '[(.Issues // [])[] | . + {module: $module}]' \
+    if [[ ! -s "${WORK}/out.json" ]] || ! jq -c --arg mod "${module}" '[(.Issues // [])[] | . + {module: $mod}]' \
         "${WORK}/out.json" > "${WORK}/found.json" 2> /dev/null; then
         ERRORS+=("${module}")
         echo "ERROR: golangci-lint wrote no JSON report in $(gq_label "${module}")." >&2

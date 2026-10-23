@@ -105,7 +105,7 @@ parameters:
     description: >
       Absolute path of the directory to write the reports into. Environment
       variables are not expanded, since the path is also passed to
-      store_artifacts and store_test_results.
+      store_artifacts.
   report_name:
     type: string
     default: go-bench

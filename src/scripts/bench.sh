@@ -156,21 +156,21 @@ run_bench() {
 for module in "${GQ_MODULES[@]}"; do
     if [[ -z "${BASE_REF}" ]]; then
         echo "Running the benchmarks of $(gq_label "${module}") ${COUNT} times..."
-        run_bench "${module}" "${HEAD_OUT}" "${module}" "${COUNT}"
+        run_bench "${module}" "${HEAD_OUT}" "$(gq_label "${module}")" "${COUNT}"
         continue
     fi
     base_module="${BASE_DIR%/}/${module}"
     if [[ ! -f "${base_module}/go.mod" ]]; then
         echo "WARN: $(gq_label "${module}") has no go.mod at ${BASE_REF}, so its benchmarks are run without a comparison." >&2
-        run_bench "${module}" "${HEAD_OUT}" "${module}" "${COUNT}"
+        run_bench "${module}" "${HEAD_OUT}" "$(gq_label "${module}")" "${COUNT}"
         continue
     fi
     COMPARED+=("${module}")
     : >> "${BASE_OUT}"
     echo "Running the benchmarks of $(gq_label "${module}") ${COUNT} times on this commit and on ${BASE_REF}, alternately..."
     for ((round = 1; round <= COUNT; round++)); do
-        run_bench "${base_module}" "${BASE_OUT}" "${module} at ${BASE_REF}" 1
-        run_bench "${module}" "${HEAD_OUT}" "${module}" 1
+        run_bench "${base_module}" "${BASE_OUT}" "$(gq_label "${module}") at ${BASE_REF}" 1
+        run_bench "${module}" "${HEAD_OUT}" "$(gq_label "${module}")" 1
     done
 done
 if ! grep -q '^Benchmark' "${HEAD_OUT}"; then

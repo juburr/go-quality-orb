@@ -79,15 +79,15 @@ for module in "${GQ_MODULES[@]}"; do
         } >> "${LOG}"
         if [[ "${rc}" -eq 0 ]]; then
             echo "  $(gq_label "${module}"): builds for ${platform}"
-            CASES=$(jq -c --arg module "${module}" --arg platform "${platform}" \
-                '. + [{classname: $module, name: $platform, status: "passed"}]' <<< "${CASES}")
+            CASES=$(jq -c --arg mod "${module}" --arg platform "${platform}" \
+                '. + [{classname: $mod, name: $platform, status: "passed"}]' <<< "${CASES}")
             continue
         fi
         FAILED+=("$(gq_label "${module}") for ${platform}")
         echo "  $(gq_label "${module}"): does NOT build for ${platform}:"
         tail -n 30 "${WORK}/out" | sed 's/^/    /'
-        CASES=$(jq -c --arg module "${module}" --arg platform "${platform}" --rawfile log "${WORK}/out" \
-            '. + [{classname: $module, name: $platform, status: "failed", message: "\($module) does not build for \($platform)", detail: $log}]' <<< "${CASES}")
+        CASES=$(jq -c --arg mod "${module}" --arg platform "${platform}" --rawfile log "${WORK}/out" \
+            '. + [{classname: $mod, name: $platform, status: "failed", message: "\($mod) does not build for \($platform)", detail: $log}]' <<< "${CASES}")
     done
 done
 if [[ "${JUNIT}" == true ]]; then

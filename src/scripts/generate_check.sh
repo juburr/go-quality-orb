@@ -123,7 +123,10 @@ done
 if [[ "${JUNIT}" == true ]]; then
     gq_junit "${GQ_OUT}/junit/${PARAM_REPORT_NAME}.xml" "go generate" "${CASES}"
 fi
-printf '%s\n' ${CHANGED[@]+"${CHANGED[@]}"} > "${GQ_BASE}.txt"
+: > "${GQ_BASE}.txt"
+if [[ ${#CHANGED[@]} -gt 0 ]]; then
+    printf '%s\n' "${CHANGED[@]}" > "${GQ_BASE}.txt"
+fi
 
 if [[ ${#CHANGED[@]} -gt 0 ]]; then
     echo "What go generate changed is in ${DIFF} (paths are relative to ${TOP})."

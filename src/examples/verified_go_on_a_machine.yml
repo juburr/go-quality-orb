@@ -1,0 +1,25 @@
+description: >
+  Run the checks on a machine executor, which tests that start containers
+  often need: install_go installs a verified Go release, without root, and
+  puts it first on the PATH for later steps.
+
+usage:
+  version: 2.1
+  orbs:
+    go-quality: juburr/go-quality-orb@0.1.0
+  jobs:
+    integration:
+      machine:
+        image: ubuntu-2404:current
+      steps:
+        - checkout
+        - go-quality/install:
+            tools: go gotestsum
+            go_version: 1.27.3
+        - go-quality/test:
+            tags: integration
+            race: true
+  workflows:
+    integration:
+      jobs:
+        - integration

@@ -1,0 +1,29 @@
+description: >
+  Spread a heavy test suite across parallel nodes: with split_tests, each
+  node runs its share of the packages, split by the timings CircleCI keeps
+  from earlier JUnit results. Flaky tests are run again up to twice before
+  they fail the job, and gotestsum reports which ones needed it.
+
+usage:
+  version: 2.1
+  orbs:
+    go-quality: juburr/go-quality-orb@0.1.0
+  jobs:
+    test:
+      docker:
+        - image: cimg/go:1.27
+      parallelism: 4
+      steps:
+        - checkout
+        - go-quality/install:
+            tools: gotestsum
+        - go-quality/test:
+            split_tests: true
+            race: true
+            rerun_fails: "2"
+            timeout: 20m
+            no_output_timeout: 30m
+  workflows:
+    test:
+      jobs:
+        - test

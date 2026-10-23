@@ -50,14 +50,14 @@ for module in "${GQ_MODULES[@]}"; do
     cat "${WORK}/out" "${WORK}/err" | grep -E $'^([{}]|\t)' > "${WORK}/json" || true
     # Positions are absolute paths, made relative to the working directory.
     # shellcheck disable=SC2016 # jq program, not shell
-    if ! jq -s -c --arg module "${module}" --arg prefix "$(gq_join "${module}" "")" \
+    if ! jq -s -c --arg mod "${module}" --arg prefix "$(gq_join "${module}" "")" \
         --arg root "$(cd "${module}" && pwd)/" --arg physical "$(cd "${module}" && pwd -P)/" '
         def relative: if startswith($root) then $prefix + .[($root | length):]
             elif startswith($physical) then $prefix + .[($physical | length):] else . end;
         [.[] | to_entries[] | .key as $package | .value | to_entries[] | .key as $analyzer | .value
-         | if type == "array" then .[] | {module: $module, package: $package, analyzer: $analyzer,
+         | if type == "array" then .[] | {module: $mod, package: $package, analyzer: $analyzer,
                position: ((.posn // "") | relative), message: (.message // "")}
-           else {module: $module, package: $package, analyzer: $analyzer, error: (.error // tostring)} end]' \
+           else {module: $mod, package: $package, analyzer: $analyzer, error: (.error // tostring)} end]' \
         "${WORK}/json" > "${WORK}/found.json" 2> "${WORK}/jq.err"; then
         ERRORS+=("${module}")
         echo "ERROR: go vet's JSON report in $(gq_label "${module}") could not be read: $(head -c 300 "${WORK}/jq.err")" >&2
