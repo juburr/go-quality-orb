@@ -1,0 +1,96 @@
+description: >
+  Runs go vet in each module and writes what its analyzers find as JSON
+  (<report_name>.json). The step fails when go vet finds problems, unless
+  report_only is true; it always fails when go vet can't complete, such as for
+  code that doesn't compile.
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  packages:
+    type: string
+    default: "./..."
+    description: >
+      The package patterns to vet in each module, separated by commas or
+      spaces. Environment variables are expanded.
+  tags:
+    type: string
+    default: ""
+    description: >
+      Build tags (go -tags), separated by commas. Environment variables are
+      expanded.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More go vet arguments, split like shell words. Nothing in them is
+      expanded or run; environment variables are expanded before splitting.
+      Such as analyzer flags, -printf.funcs=Logf or -unusedresult=false.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: go-vet
+    description: >
+      The reports' file name, without extension: <report_name>.json and
+      junit/<report_name>.xml. Give each run of this command in a job its own.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one failing test case per problem, and show it in
+      CircleCI's Tests tab.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A go vet that can't complete still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: go vet
+      working_directory: << parameters.working_dir >>
+      environment:
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PACKAGES: << parameters.packages >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_TAGS: << parameters.tags >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/vet.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always

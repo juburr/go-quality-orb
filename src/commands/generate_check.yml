@@ -1,0 +1,108 @@
+description: >
+  Checks that generated code is up to date: runs go generate in each module
+  and fails when it changed, added or deleted any file git tracks or would
+  track (ignored files don't count), listing them and writing the changes
+  (<report_name>.diff). Files that differed from git's index before the step
+  only count when go generate changes them again. working_dir must be in a git
+  checkout, and the generators go generate runs (protoc, mockgen, stringer,
+  sqlc...) must be installed first. The step fails when go generate changes
+  something, unless report_only is true; it always fails when go generate
+  fails.
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  packages:
+    type: string
+    default: "./..."
+    description: >
+      The package patterns to run go generate for in each module, separated by
+      commas or spaces. Environment variables are expanded.
+  run:
+    type: string
+    default: ""
+    description: >
+      Only run the //go:generate directives matching this regular expression
+      (go generate -run). Environment variables are expanded.
+  skip:
+    type: string
+    default: ""
+    description: >
+      Skip the //go:generate directives matching this regular expression (go
+      generate -skip, Go 1.22 and later). Environment variables are expanded.
+  tags:
+    type: string
+    default: ""
+    description: >
+      Build tags (go -tags), separated by commas. Environment variables are
+      expanded.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: go-generate
+    description: >
+      The reports' file name, without extension: <report_name>.txt (the
+      changed files), .diff, .log and junit/<report_name>.xml. Give each run
+      of this command in a job its own.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one failing test case per changed file, and show
+      it in CircleCI's Tests tab.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A go generate that fails still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: go generate
+      working_directory: << parameters.working_dir >>
+      environment:
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PACKAGES: << parameters.packages >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_RUN: << parameters.run >>
+        PARAM_SKIP: << parameters.skip >>
+        PARAM_TAGS: << parameters.tags >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/generate_check.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always
