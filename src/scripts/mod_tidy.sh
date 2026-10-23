@@ -60,7 +60,9 @@ for module in "${GQ_MODULES[@]}"; do
         continue
     fi
     # Changes come as a unified diff on stdout; an error has none.
-    if [[ "${rc}" -eq 1 ]] && head -n 1 "${WORK}/out" | grep -q '^diff '; then
+    first=""
+    IFS= read -r first < "${WORK}/out" || true
+    if [[ "${rc}" -eq 1 && "${first}" == "diff "* ]]; then
         UNTIDY+=("${module}")
         echo "  not tidy:"
         sed 's/^/    /' "${WORK}/out"

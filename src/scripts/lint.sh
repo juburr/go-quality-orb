@@ -41,12 +41,10 @@ for word in ${EXTRA[@]+"${EXTRA[@]}"}; do
     esac
 done
 
+# golangci-lint 1 has other output flags. A build that doesn't say its
+# version (one from a local checkout says "(devel)") is taken to be 2.
 VERSION=$("${LINTER}" version 2>&1 || true)
-if ! gq_match "${VERSION}" 'has version v?([0-9]+)\.'; then
-    echo "ERROR: ${LINTER} doesn't say which version it is: ${VERSION}" >&2
-    exit 1
-fi
-if [[ "${BASH_REMATCH[1]}" -lt 2 ]]; then
+if gq_match "${VERSION}" 'has version v?([0-9]+)\.' && [[ "${BASH_REMATCH[1]}" -lt 2 ]]; then
     echo "ERROR: lint needs golangci-lint 2 or newer, and ${LINTER} is: ${VERSION}" >&2
     echo "  Install golangci-lint 2 with this orb's install_golangci_lint command." >&2
     exit 1

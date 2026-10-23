@@ -324,6 +324,14 @@ check "checks 5 files" said "Checking the formatting of 5 Go files"
 run fmt "working_dir=${CLEAN}"
 check "without exclude, finds third_party" said "not formatted: third_party/x/x.go"
 check "and nothing go ./... skips" not_said "vendor/v/x.go"
+printf 'package x\nfunc  F() {}\n' > "${CLEAN}/greet/_ignored.go"
+cp "${CLEAN}/greet/_ignored.go" "${CLEAN}/greet/.hidden.go"
+run fmt "working_dir=${CLEAN}" exclude=third_party
+check "files the go command ignores (_x.go, .x.go) are skipped" succeeded
+mkdir -p "${WORK}/nogo"
+run fmt "working_dir=${WORK}/nogo"
+check "a directory without Go files passes" succeeded
+check "saying it checked none" said "Checking the formatting of 0 Go files"
 run fmt "working_dir=${CLEAN}" "exclude=../elsewhere"
 check "refuses an exclude outside working_dir" failed
 check "saying so" said "exclude must name directories inside the working directory"
@@ -478,6 +486,8 @@ check "built with an older Go: says to install a newer golangci-lint" said "This
 run lint "working_dir=${CLEAN}" -- STUB_LINT_VERSION=1.64.8
 check "golangci-lint 1 is refused" said "lint needs golangci-lint 2 or newer"
 check "before it runs" not_called_with golangci-lint run
+run lint "working_dir=${CLEAN}" -- "STUB_LINT_VERSION=(devel)"
+check "a build that doesn't say its version is taken to be 2" succeeded
 
 begin "lint: parameters"
 mkdir -p "${REPO}/config"

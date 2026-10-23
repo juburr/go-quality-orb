@@ -63,13 +63,14 @@ for entry in ${GQ_LIST[@]+"${GQ_LIST[@]}"}; do
     PRUNE+=(-o -path "./${dir}")
 done
 
-# Each file is passed as ./<path>, so a name that starts with "-" is never
-# read as a flag.
+# The go command also ignores files whose names start with "." or "_". Each
+# file is passed as ./<path>, so a name that starts with "-" is never read as
+# a flag.
 FILES=()
 while IFS= read -r -d '' file; do
     FILES+=("${file}")
 done < <(find . -mindepth 1 \( -type d \( -name vendor -o -name testdata -o -name '.*' -o -name '_*' \) \
-    ${PRUNE[@]+"${PRUNE[@]}"} \) -prune -o -type f -name '*.go' -print0 | LC_ALL=C sort -z)
+    ${PRUNE[@]+"${PRUNE[@]}"} \) -prune -o -type f -name '*.go' ! -name '.*' ! -name '_*' -print0 | LC_ALL=C sort -z)
 # gofmt has no version option; it is the gofmt of the Go release it came with.
 VERSION=""
 if [[ "${FORMATTER}" == gofumpt ]]; then
@@ -80,7 +81,7 @@ echo "Checking the formatting of $(gq_plural "${#FILES[@]}" "Go file" "Go files"
 LIST="${GQ_BASE}.txt"
 DIFF="${GQ_BASE}.diff"
 LOG="${GQ_BASE}.log"
-: > "${LIST}"
+: > "${LIST}.tmp"
 : > "${DIFF}"
 rc=0
 if [[ ${#FILES[@]} -gt 0 ]]; then
