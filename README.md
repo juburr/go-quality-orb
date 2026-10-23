@@ -332,7 +332,7 @@ Runs golangci-lint 2 in each module, with the module's own configuration as gola
 
 ### `go-quality/generate_check`
 
-Runs `go generate` in each module, and fails when it changed, added or deleted any file git tracks or would track (ignored files don't count), so generated code (mocks, protobuf, stringer, sqlc) can't drift from its source. Files that already differed from git's index before the step only count when `go generate` changes them again. `working_dir` must be in a git checkout, and the generators `go generate` runs must be installed first; a generator that fails always fails the step. What `go generate` writes stays in the working tree.
+Runs `go generate` in each module, and fails when it changed, added or deleted any file git tracks or would track (ignored files don't count), so generated code (mocks, protobuf, stringer, sqlc) can't drift from its source. Files that already differed from git's index before the step only count when `go generate` changes them again. A module in a git submodule is compared with the submodule's own repository. `working_dir` must be in a git checkout, and the generators `go generate` runs must be installed first; a generator that fails always fails the step. What `go generate` writes stays in the working tree.
 
 | Parameter | Default | Description |
 | --- | --- | --- |

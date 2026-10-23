@@ -128,7 +128,9 @@ EOF
 # --path-mode). STUB_LINT_VERSION is the version it
 # reports. Like golangci-lint 2, it writes paths relative to the directory
 # of its config (--config, or the nearest .golangci.yml above), with
-# --path-prefix before them, or absolute with --path-mode=abs.
+# --path-prefix before them, or absolute with --path-mode=abs. It exits
+# with STUB_LINT_ISSUES_EXIT for issues, as a config's run.issues-exit-code
+# makes golangci-lint do, unless --issues-exit-code is given.
 {
     echo '#!/usr/bin/env bash'
     record
@@ -137,9 +139,10 @@ if [[ "$1" == version ]]; then
     echo "golangci-lint has version ${STUB_LINT_VERSION:-2.15.0} built with go1.27.0 from 25c5369a on 2026-10-16T11:03:09Z"
     exit 0
 fi
-json="" sarif="" prefix="" abs=false base=""
+json="" sarif="" prefix="" abs=false base="" issues_exit=${STUB_LINT_ISSUES_EXIT:-1}
 for arg in "$@"; do
     case "${arg}" in
+        --issues-exit-code=*) issues_exit=${arg#*=} ;;
         --output.json.path=*) json=${arg#*=} ;;
         --output.sarif.path=*) sarif=${arg#*=} ;;
         --path-prefix=*) prefix="${arg#*=}/" ;;
@@ -175,8 +178,8 @@ case "${mode}" in
 esac
 issues="" rc=0
 case "${mode}" in
-    issues) issues="$(issue errcheck 'Error return value of `os.Remove` is not checked' "${file}" 30 11),$(issue govet 'assign: self-assignment of s' "${file}" 24 2)"; rc=1 ;;
-    typecheck) issues="$(issue typecheck 'undefined: x' "${file}" 3 1)"; rc=1 ;;
+    issues) issues="$(issue errcheck 'Error return value of `os.Remove` is not checked' "${file}" 30 11),$(issue govet 'assign: self-assignment of s' "${file}" 24 2)"; rc=${issues_exit} ;;
+    typecheck) issues="$(issue typecheck 'undefined: x' "${file}" 3 1)"; rc=${issues_exit} ;;
     logged) echo 'level=error msg="[linters_context] typechecking error: stat ./nope: directory not found"' >&2 ;;
 esac
 printf '{"Issues":[%s],"Report":{"Linters":[]}}\n' "${issues}" > "${json}"
@@ -483,6 +486,10 @@ check "write a JUnit case per issue" file_has "${OUT}/junit/golangci-lint.xml" '
 run lint "working_dir=${DIRTY}" report_only=true sarif=false -- STUB_LINT=issues
 check "report_only passes" succeeded
 check "sarif false writes no SARIF" absent "${OUT}/golangci-lint.sarif"
+run lint "working_dir=${DIRTY}" report_only=true -- STUB_LINT=issues STUB_LINT_ISSUES_EXIT=2
+check "a config's issues-exit-code doesn't make issues an error" succeeded
+check "since the exit code for issues is set" called_with golangci-lint --issues-exit-code=1
+check "and the issues are still reported" json_is "${OUT}/golangci-lint.json" 'length' "2"
 
 begin "lint: several modules"
 run lint "working_dir=${REPO}" modules=all -- STUB_LINT=bymodule
@@ -584,6 +591,24 @@ check "and are written" exists "${CLEAN}/reports/go-generate.log"
 reset_repo
 run generate_check "working_dir=${DIRTY}" "output_dir=${DIRTY}/reports" report_only=true
 check "only what go generate changed is listed" test "$(cat "${DIRTY}/reports/go-generate.txt")" == dirty/parse/version_gen.go
+reset_repo
+
+begin "generate_check: a module in a git submodule"
+cp -R "${ROOT}/tests/fixtures/dirty" "${WORK}/submodule"
+git -C "${WORK}/submodule" init -q
+git -C "${WORK}/submodule" add -A
+git -C "${WORK}/submodule" -c user.name=test -c user.email=test@example.com commit -q -m dirty
+git -C "${REPO}" -c protocol.file.allow=always submodule --quiet add "${WORK}/submodule" vendored
+git -C "${REPO}" -c user.name=test -c user.email=test@example.com commit -q -m submodule
+run generate_check "working_dir=${REPO}" modules=vendored
+check "is compared with its own repository" failed
+check "naming the file relative to the checkout" said "changed: vendored/parse/version_gen.go"
+check "with a diff that applies at the checkout's top" file_has "${OUT}/go-generate.diff" "+++ b/vendored/parse/version_gen.go"
+git -C "${REPO}/vendored" checkout -q -- .
+run generate_check "working_dir=${REPO}" modules=clean
+check "while other modules are still compared with the checkout" succeeded
+git -C "${REPO}" reset -q --hard HEAD~1
+rm -rf "${REPO:?}/vendored" "${REPO:?}/.git/modules"
 reset_repo
 
 begin "generate_check: failures"
@@ -690,6 +715,12 @@ check "writes a JUnit case" file_has "${OUT}/junit/go-fuzz.xml" 'classname="exam
 run fuzz "working_dir=${CLEAN}" targets=Nothing
 check "targets that match nothing pass" succeeded
 check "saying there is nothing to fuzz" said "There are no fuzz tests matching Nothing"
+printf '//go:build race\n\npackage greet\n\nimport "testing"\n\nfunc FuzzRace(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, s string) {})\n}\n' \
+    > "${CLEAN}/greet/race_fuzz_test.go"
+run fuzz "working_dir=${CLEAN}" targets=FuzzRace fuzz_time=20x "extra_args=-race"
+check "build flags in extra_args also pick the fuzz tests" said "Fuzzing example.com/clean/greet FuzzRace for 20x..."
+check "and they pass" said "Passed: 1 fuzz test ran for 20x each without failing."
+reset_repo
 
 begin "fuzz: a failing input is a finding"
 mkdir -p "${DIRTY}/parse/testdata/fuzz/FuzzParse"
@@ -733,6 +764,8 @@ run fuzz "working_dir=${CLEAN}" "targets=(unclosed"
 check "targets that don't compile fail" said "targets is not a valid regular expression"
 run fuzz "working_dir=${CLEAN}" "extra_args=-fuzztime=1h"
 check "extra_args can't set -fuzztime" said "extra_args can't hold -fuzztime=1h"
+run fuzz "working_dir=${CLEAN}" "extra_args=-list=."
+check "or -list" said "extra_args can't hold -list=."
 
 # ----------------------------------------------------------------- bench
 begin "bench: this commit only"

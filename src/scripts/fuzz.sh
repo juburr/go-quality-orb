@@ -47,8 +47,9 @@ if [[ -n "${TARGETS}" ]]; then
 fi
 for word in ${EXTRA[@]+"${EXTRA[@]}"}; do
     case "${word}" in
-        -fuzz | -fuzz=* | --fuzz | --fuzz=* | -run | -run=* | --run | --run=* | -fuzztime | -fuzztime=* | --fuzztime | --fuzztime=*)
-            echo "ERROR: extra_args can't hold ${word}: this command runs each fuzz test with -run, -fuzz and -fuzztime." >&2
+        -fuzz | -fuzz=* | --fuzz | --fuzz=* | -run | -run=* | --run | --run=* | -fuzztime | -fuzztime=* | --fuzztime | --fuzztime=* \
+            | -list | -list=* | --list | --list=*)
+            echo "ERROR: extra_args can't hold ${word}: this command lists the fuzz tests with -list, and runs each with -run, -fuzz and -fuzztime." >&2
             exit 1
             ;;
     esac
@@ -70,8 +71,10 @@ FAILED=()
 ERRORS=()
 TOTAL=0
 for module in "${GQ_MODULES[@]}"; do
-    # Each fuzz test, as "<package>\t<name>". -list runs no tests.
-    if ! (cd "${module}" && go test ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} -list '^Fuzz' -json "${GQ_PACKAGES[@]}") \
+    # Each fuzz test, as "<package>\t<name>". -list runs no tests. It gets
+    # extra_args too, since build flags in them (such as -race) decide which
+    # files the fuzzing builds.
+    if ! (cd "${module}" && go test ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"} -list '^Fuzz' -json "${GQ_PACKAGES[@]}") \
         > "${WORK}/list.json" 2> "${WORK}/list.err"; then
         ERRORS+=("${module}")
         echo "ERROR: go test -list could not list the fuzz tests of $(gq_label "${module}"). Its output:" >&2
@@ -86,7 +89,10 @@ for module in "${GQ_MODULES[@]}"; do
             continue
         fi
         TOTAL=$((TOTAL + 1))
-        if ! dir=$(cd "${module}" && go list ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} -f '{{.Dir}}' "${package}" 2> "${WORK}/dir.err"); then
+        # -e prints the directory even when build constraints exclude every
+        # file without the build flags in extra_args, which go list can't
+        # take with go test's own flags.
+        if ! dir=$(cd "${module}" && go list -e -f '{{.Dir}}' "${package}" 2> "${WORK}/dir.err") || [[ -z "${dir}" ]]; then
             ERRORS+=("${package}.${name}")
             echo "ERROR: go list could not find the directory of ${package}: $(head -c 300 "${WORK}/dir.err")" >&2
             continue

@@ -5,9 +5,9 @@
 # or deleted, as git sees them (ignored files don't count, since they aren't
 # committed). The files changed before the step don't count either: their
 # contents are recorded first, and only what go generate changed is
-# reported. A go generate that fails stops the step whatever report_only
-# says; the generators it runs (protoc, mockgen, sqlc...) must be installed
-# first.
+# reported. A module in a git submodule is compared with its own repository.
+# A go generate that fails stops the step whatever report_only says; the
+# generators it runs (protoc, mockgen, sqlc...) must be installed first.
 
 set -euo pipefail
 
@@ -48,26 +48,64 @@ ARGS+=("${GQ_PACKAGES[@]}")
 WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
 
+# The repositories to compare: the checkout, and each git submodule (or
+# other repository inside it) that holds one of the modules, as paths
+# relative to the checkout's top with a trailing slash ("" for the top).
+# The checkout's own git status leaves out the files inside them.
+REPOS=("")
+for module in "${GQ_MODULES[@]}"; do
+    if ! repo=$(git -C "${module}" rev-parse --show-toplevel 2> /dev/null); then
+        echo "ERROR: generate_check could not find the git repository of $(gq_label "${module}")." >&2
+        exit 1
+    fi
+    [[ "${repo}" == "${TOP}" ]] && continue
+    if [[ "${repo}" != "${TOP}/"* ]]; then
+        echo "ERROR: $(gq_label "${module}") is in the git repository ${repo}, outside ${TOP}." >&2
+        exit 1
+    fi
+    repo="${repo#"${TOP}/"}/"
+    known=false
+    for seen in "${REPOS[@]}"; do
+        [[ "${seen}" == "${repo}" ]] && known=true
+    done
+    [[ "${known}" == true ]] || REPOS+=("${repo}")
+done
+
+# repo_of PATH: sets REPO to the repository that holds PATH, relative to the
+# checkout's top: the longest of REPOS that PATH starts with.
+repo_of() {
+    local candidate
+    REPO=""
+    for candidate in "${REPOS[@]}"; do
+        if [[ "$1" == "${candidate}"* && ${#candidate} -gt ${#REPO} ]]; then
+            REPO=${candidate}
+        fi
+    done
+}
+
 # snapshot FILE: writes "<path>\t<content hash or -deleted->", sorted, for
 # every file git status reports (modified, added, deleted or untracked, not
-# ignored), with paths relative to the top of the checkout. git status
-# compares contents, so a file rewritten as it was doesn't count, and with
-# GIT_OPTIONAL_LOCKS=0 it doesn't rewrite the index as it does so.
+# ignored) in each of REPOS, with paths relative to the top of the checkout.
+# git status compares contents, so a file rewritten as it was doesn't count,
+# and with GIT_OPTIONAL_LOCKS=0 it doesn't rewrite the index as it does so.
 snapshot() {
-    local entry path hash
+    local entry path hash repo dir
     : > "$1.unsorted"
-    while IFS= read -r -d '' entry; do
-        path=${entry:3}
-        if [[ -L "${TOP}/${path}" ]]; then
-            hash="link:$(readlink "${TOP}/${path}")"
-        elif [[ -f "${TOP}/${path}" ]]; then
-            hash=$(git -C "${TOP}" hash-object --no-filters -- "${path}")
-        else
-            hash="-deleted-"
-        fi
-        printf '%s\t%s\n' "${path}" "${hash}" >> "$1.unsorted"
-    done < <(GIT_OPTIONAL_LOCKS=0 git -C "${TOP}" status --porcelain=v1 -z --untracked-files=all --no-renames \
-        --ignore-submodules=all)
+    for repo in "${REPOS[@]}"; do
+        dir="${TOP}/${repo}"
+        while IFS= read -r -d '' entry; do
+            path=${entry:3}
+            if [[ -L "${dir}${path}" ]]; then
+                hash="link:$(readlink "${dir}${path}")"
+            elif [[ -f "${dir}${path}" ]]; then
+                hash=$(git -C "${dir}" hash-object --no-filters -- "${path}")
+            else
+                hash="-deleted-"
+            fi
+            printf '%s\t%s\n' "${repo}${path}" "${hash}" >> "$1.unsorted"
+        done < <(GIT_OPTIONAL_LOCKS=0 git -C "${dir}" status --porcelain=v1 -z --untracked-files=all --no-renames \
+            --ignore-submodules=all)
+    done
     LC_ALL=C sort -u "$1.unsorted" > "$1"
 }
 
@@ -110,15 +148,21 @@ DIFF="${GQ_BASE}.diff"
 : > "${DIFF}"
 CASES="[]"
 for path in ${CHANGED[@]+"${CHANGED[@]}"}; do
-    if git -C "${TOP}" ls-files --error-unmatch -- "${path}" > /dev/null 2>&1; then
+    # Each diff is made in the file's own repository, with the paths in it
+    # relative to the checkout's top, so git apply there takes all of them.
+    repo_of "${path}"
+    dir="${TOP}/${REPO}"
+    file=${path#"${REPO}"}
+    prefixes=("--src-prefix=a/${REPO}" "--dst-prefix=b/${REPO}")
+    if git -C "${dir}" ls-files --error-unmatch -- "${file}" > /dev/null 2>&1; then
         state="changed"
         [[ -e "${TOP}/${path}" || -L "${TOP}/${path}" ]] || state="deleted"
-        patch=$(git -C "${TOP}" diff --no-ext-diff --no-color -- "${path}" || true)
+        patch=$(git -C "${dir}" diff --no-ext-diff --no-color "${prefixes[@]}" -- "${file}" || true)
     else
         state="added"
         [[ -e "${TOP}/${path}" || -L "${TOP}/${path}" ]] || state="deleted"
         # git diff --no-index exits 1 when the files differ.
-        patch=$(git -C "${TOP}" diff --no-ext-diff --no-color --no-index -- /dev/null "${path}" 2> /dev/null || true)
+        patch=$(git -C "${dir}" diff --no-ext-diff --no-color --no-index "${prefixes[@]}" -- /dev/null "${file}" 2> /dev/null || true)
     fi
     echo "  ${state}: ${path}"
     printf '%s\n' "${patch}" >> "${DIFF}"

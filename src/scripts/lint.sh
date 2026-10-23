@@ -51,7 +51,8 @@ if gq_match "${VERSION}" 'has version v?([0-9]+)\.' && [[ "${BASH_REMATCH[1]}" -
 fi
 echo "${VERSION}"
 
-ARGS=(run --output.text.path=stdout --output.text.colors=false)
+# A config's run.issues-exit-code would change what exit code means issues.
+ARGS=(run --output.text.path=stdout --output.text.colors=false --issues-exit-code=1)
 if [[ -n "${CONFIG}" ]]; then
     if [[ ! -f "${CONFIG}" ]]; then
         echo "ERROR: config ${CONFIG} does not exist (in $(pwd))." >&2
