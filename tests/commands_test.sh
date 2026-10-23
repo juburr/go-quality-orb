@@ -123,9 +123,12 @@ EOF
 # golangci-lint: STUB_LINT is clean, issues, bymodule (issues in a directory
 # named dirty, none elsewhere), typecheck, logged (an error it only logs,
 # exiting 0), config (a version 1 configuration), goversion (built with an
-# older Go than go.mod asks for), nojson (exits 0 writing no report) or
-# nofiles (no Go files, exit code 5). STUB_LINT_VERSION is the version it
-# reports.
+# older Go than go.mod asks for), nojson (exits 0 writing no report),
+# nofiles (no Go files, exit code 5) or nopathmode (a release without
+# --path-mode). STUB_LINT_VERSION is the version it
+# reports. Like golangci-lint 2, it writes paths relative to the directory
+# of its config (--config, or the nearest .golangci.yml above), with
+# --path-prefix before them, or absolute with --path-mode=abs.
 {
     echo '#!/usr/bin/env bash'
     record
@@ -134,39 +137,55 @@ if [[ "$1" == version ]]; then
     echo "golangci-lint has version ${STUB_LINT_VERSION:-2.15.0} built with go1.27.0 from 25c5369a on 2026-10-16T11:03:09Z"
     exit 0
 fi
-json="" sarif="" prefix=""
+json="" sarif="" prefix="" abs=false base=""
 for arg in "$@"; do
     case "${arg}" in
         --output.json.path=*) json=${arg#*=} ;;
         --output.sarif.path=*) sarif=${arg#*=} ;;
         --path-prefix=*) prefix="${arg#*=}/" ;;
+        --path-mode=abs) abs=true ;;
+        --config=*) base=$(dirname "${arg#*=}") ;;
     esac
 done
+dir=${PWD}
+while [[ -z "${base}" && "${dir}" != / ]]; do
+    [[ -f "${dir}/.golangci.yml" ]] && base=${dir}
+    dir=$(dirname "${dir}")
+done
+base=${base:-${PWD}}
+file=${PWD#"${base}"}
+file="${prefix}${file#/}${file:+/}parse/parse.go"
+if [[ "${abs}" == true ]]; then
+    file="${PWD}/parse/parse.go"
+fi
 mode=${STUB_LINT:-clean}
 if [[ "${mode}" == bymodule ]]; then
     mode=clean
     [[ "${PWD##*/}" == dirty ]] && mode=issues
 fi
 issue() {
-    printf '{"FromLinter":"%s","Text":"%s","Severity":"","SourceLines":["\\tos.Remove(path)"],"Pos":{"Filename":"%sparse/parse.go","Offset":1,"Line":%s,"Column":%s}}' "$@"
+    printf '{"FromLinter":"%s","Text":"%s","Severity":"","SourceLines":["\\tos.Remove(path)"],"Pos":{"Filename":"%s","Offset":1,"Line":%s,"Column":%s}}' "$@"
 }
 case "${mode}" in
     config) echo 'Error: can'"'"'t load config: unsupported version of the configuration: "" See https://golangci-lint.run/docs/product/migration-guide' >&2; exit 3 ;;
     goversion) echo "Error: can't load config: the Go language version (go1.25) used to build golangci-lint is lower than the targeted Go version (1.26.0)" >&2; exit 3 ;;
     nofiles) echo 'level=error msg="Running error: context loading failed: no go files to analyze"' >&2; exit 5 ;;
     nojson) exit 0 ;;
+    nopathmode) echo 'Error: unknown flag: --path-mode' >&2; exit 3 ;;
 esac
 issues="" rc=0
 case "${mode}" in
-    issues) issues="$(issue errcheck 'Error return value of `os.Remove` is not checked' "${prefix}" 30 11),$(issue govet 'assign: self-assignment of s' "${prefix}" 24 2)"; rc=1 ;;
-    typecheck) issues="$(issue typecheck 'undefined: x' "${prefix}" 3 1)"; rc=1 ;;
+    issues) issues="$(issue errcheck 'Error return value of `os.Remove` is not checked' "${file}" 30 11),$(issue govet 'assign: self-assignment of s' "${file}" 24 2)"; rc=1 ;;
+    typecheck) issues="$(issue typecheck 'undefined: x' "${file}" 3 1)"; rc=1 ;;
     logged) echo 'level=error msg="[linters_context] typechecking error: stat ./nope: directory not found"' >&2 ;;
 esac
 printf '{"Issues":[%s],"Report":{"Linters":[]}}\n' "${issues}" > "${json}"
 if [[ -n "${sarif}" ]]; then
-    printf '{"version":"2.1.0","$schema":"https://example","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[]}]}\n' > "${sarif}"
+    results=""
+    [[ -n "${issues}" ]] && results='{"ruleId":"errcheck","locations":[{"physicalLocation":{"artifactLocation":{"uri":"'"${file}"'","index":0},"region":{"startLine":30}}}]}'
+    printf '{"version":"2.1.0","$schema":"https://example","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[%s]}]}\n' "${results}" > "${sarif}"
 fi
-[[ -n "${issues}" ]] && printf '%sparse/parse.go:30:11: Error return value is not checked (errcheck)\n' "${prefix}"
+[[ -n "${issues}" ]] && printf '%s:30:11: Error return value is not checked (errcheck)\n' "${file}"
 exit "${rc}"
 EOF
 } > "${STUBS}/golangci-lint"
@@ -452,12 +471,14 @@ begin "lint: issues, and their reports"
 run lint "working_dir=${CLEAN}" -- STUB_LINT=clean
 check "no issues passes" succeeded
 check "runs golangci-lint run with its outputs" called_with golangci-lint run --output.text.path=stdout --output.text.colors=false ./...
-check "without a path prefix for the working directory's module" not_said "--path-prefix"
+check "asks for absolute paths" called_with golangci-lint --path-mode=abs
 run lint "working_dir=${DIRTY}" -- STUB_LINT=issues
 check "issues fail the step" failed
 check "count them" said "ERROR: golangci-lint found 2 issues in example.com/dirty."
 check "write them as JSON, with the module" json_is "${OUT}/golangci-lint.json" '[.[] | .FromLinter + ":" + .module] | join(" ")' "errcheck:. govet:."
+check "with paths relative to working_dir" json_is "${OUT}/golangci-lint.json" '[.[].Pos.Filename] | unique | join(" ")' "parse/parse.go"
 check "write SARIF" json_is "${OUT}/golangci-lint.sarif" '.version + " " + (.runs | length | tostring)' "2.1.0 1"
+check "with the same paths" json_is "${OUT}/golangci-lint.sarif" '.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri' "parse/parse.go"
 check "write a JUnit case per issue" file_has "${OUT}/junit/golangci-lint.xml" 'classname="errcheck" name="parse/parse.go:30:11"'
 run lint "working_dir=${DIRTY}" report_only=true sarif=false -- STUB_LINT=issues
 check "report_only passes" succeeded
@@ -466,12 +487,22 @@ check "sarif false writes no SARIF" absent "${OUT}/golangci-lint.sarif"
 begin "lint: several modules"
 run lint "working_dir=${REPO}" modules=all -- STUB_LINT=bymodule
 check "fails for the module with issues" failed
-check "gives golangci-lint a path prefix per module" called_with golangci-lint --path-prefix=dirty
-check "so paths are relative to working_dir" json_is "${OUT}/golangci-lint.json" '.[0].Pos.Filename' "dirty/parse/parse.go"
+check "with paths relative to working_dir" json_is "${OUT}/golangci-lint.json" '.[0].Pos.Filename' "dirty/parse/parse.go"
 check "and merges the SARIF runs" json_is "${OUT}/golangci-lint.sarif" '.runs | length' "2"
+check "with the same paths" json_is "${OUT}/golangci-lint.sarif" '[.runs[].results[].locations[].physicalLocation.artifactLocation.uri] | join(" ")' "dirty/parse/parse.go"
+
+begin "lint: a module whose config is above it"
+# golangci-lint 2 writes paths relative to its config's directory.
+rm "${DIRTY}/.golangci.yml"
+printf 'version: "2"\n' > "${REPO}/.golangci.yml"
+run lint "working_dir=${REPO}" modules=dirty -- STUB_LINT=issues
+check "paths are still relative to working_dir" json_is "${OUT}/golangci-lint.json" '[.[].Pos.Filename] | unique | join(" ")' "dirty/parse/parse.go"
+check "in SARIF too" json_is "${OUT}/golangci-lint.sarif" '.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri' "dirty/parse/parse.go"
+check "and in JUnit" file_has "${OUT}/junit/golangci-lint.xml" 'name="dirty/parse/parse.go:30:11"'
+reset_repo
 
 begin "lint: a golangci-lint that can't complete fails, even with report_only"
-for mode in typecheck logged config goversion nojson nofiles; do
+for mode in typecheck logged config goversion nojson nofiles nopathmode; do
     run lint "working_dir=${CLEAN}" report_only=true -- "STUB_LINT=${mode}"
     check "${mode}: fails" failed
 done
@@ -483,6 +514,8 @@ run lint "working_dir=${CLEAN}" -- STUB_LINT=config
 check "a version 1 config: says how to migrate it" said "golangci-lint migrate converts a version 1 one"
 run lint "working_dir=${CLEAN}" -- STUB_LINT=goversion
 check "built with an older Go: says to install a newer golangci-lint" said "This golangci-lint was built with an older Go"
+run lint "working_dir=${CLEAN}" -- STUB_LINT=nopathmode
+check "a release without --path-mode: says to install a newer one" said "This golangci-lint has no --path-mode option"
 run lint "working_dir=${CLEAN}" -- STUB_LINT_VERSION=1.64.8
 check "golangci-lint 1 is refused" said "lint needs golangci-lint 2 or newer"
 check "before it runs" not_called_with golangci-lint run
@@ -544,11 +577,21 @@ check "a new file go generate adds is a finding" said "added: clean/greet/extra_
 git -C "${REPO}" reset -q --hard HEAD~1
 reset_repo
 
+begin "generate_check: an output_dir in the checkout"
+run generate_check "working_dir=${CLEAN}" "output_dir=${CLEAN}/reports"
+check "the reports aren't counted as changes" succeeded
+check "and are written" exists "${CLEAN}/reports/go-generate.log"
+reset_repo
+run generate_check "working_dir=${DIRTY}" "output_dir=${DIRTY}/reports" report_only=true
+check "only what go generate changed is listed" test "$(cat "${DIRTY}/reports/go-generate.txt")" == dirty/parse/version_gen.go
+reset_repo
+
 begin "generate_check: failures"
 printf 'package greet\n\n//go:generate false\n' > "${CLEAN}/greet/fails.go"
 run generate_check "working_dir=${CLEAN}" report_only=true
 check "a failing generator fails the step, even with report_only" failed
 check "saying so" said "go generate failed in example.com/clean"
+check "and writing its output" file_has "${OUT}/go-generate.log" "exit status 1"
 reset_repo
 mkdir -p "${WORK}/nogit"
 cp -R "${ROOT}/tests/fixtures/clean" "${WORK}/nogit/"
@@ -564,7 +607,7 @@ check "runs gotestsum with its outputs" called_with gotestsum --format pkgname-a
 check "writes go test's events" file_has "${OUT}/go-test/events.json" '"Action":"pass"'
 check "writes coverage" file_has "${OUT}/go-test/coverage.txt" "total:"
 check "writes the HTML view" exists "${OUT}/go-test/coverage.html"
-check "prints the total" said "Total coverage: 36.4% of statements."
+check "prints the total" said "Total coverage: 36.4% of statements (4 of 11)."
 run test "working_dir=${CLEAN}" race=true shuffle=on count=2 timeout=5m tags=extra run=TestHello skip=Empty short=true \
     covermode=atomic coverpkg=./... rerun_fails=2 format=testname "extra_args=-v -parallel=2" junit=false
 check "with every option, succeeds" succeeded
@@ -592,7 +635,11 @@ check "coverage above it passes" succeeded
 check "saying so" said "Passed: coverage is at least 30%."
 run test "working_dir=${CLEAN}" coverage_min=50
 check "coverage below it fails" failed
-check "saying by how much" said "Total coverage is 36.4%, below coverage_min (50%)."
+check "saying by how much" said "Total coverage is 36.4% (4 of 11 statements), below coverage_min (50%)."
+run test "working_dir=${CLEAN}" coverage_min=36.4
+check "the exact share counts, not the rounded one (4 of 11 is 36.36%)" failed
+run test "working_dir=${CLEAN}" coverage_min=36.36
+check "so a coverage_min it meets passes" succeeded
 run test "working_dir=${REPO}" modules=all coverage_min=1
 check "the total covers every module" said "Total coverage: "
 check "and each module has its own reports" exists "${OUT}/go-test/dirty/coverage.out"
@@ -613,6 +660,11 @@ run test "working_dir=${CLEAN}" split_tests=true coverage_min=10 -- CIRCLE_NODE_
 check "coverage_min can't be checked across nodes" said "coverage_min can't be checked when split_tests splits the tests"
 run test "working_dir=${CLEAN}" split_tests=true -- CIRCLE_NODE_TOTAL=1
 check "a parallelism of 1 doesn't split" not_called_with circleci tests split
+mkdir -p "${CLEAN}/raceonly"
+printf '//go:build race\n\npackage raceonly\n' > "${CLEAN}/raceonly/raceonly.go"
+run test "working_dir=${CLEAN}" split_tests=true race=true -- CIRCLE_NODE_TOTAL=2 CIRCLE_NODE_INDEX=1
+check "with race, splits the packages that build with -race" said "Node 2 of 2 runs 2 of the 4 packages in example.com/clean."
+reset_repo
 
 begin "test: parameters"
 run test "working_dir=${CLEAN}" race=true -- CGO_ENABLED=0

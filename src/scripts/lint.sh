@@ -68,6 +68,14 @@ if [[ -n "${TIMEOUT}" ]]; then
     ARGS+=("--timeout=${TIMEOUT}")
 fi
 
+# Makes an absolute path below the working directory relative to it, by its
+# logical or physical path; any other path is left as it is.
+ROOT=$(pwd)
+PHYSICAL=$(pwd -P)
+# shellcheck disable=SC2016 # jq program, not shell
+RELATIVE='def relative: if startswith($root) then .[($root | length):]
+    elif startswith($physical) then .[($physical | length):] else . end;'
+
 WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
 LOG="${GQ_BASE}.log"
@@ -81,11 +89,11 @@ for module in "${GQ_MODULES[@]}"; do
     if [[ "${SARIF}" == true ]]; then
         run+=("--output.sarif.path=${WORK}/out.sarif")
     fi
-    # Paths in every output are relative to the working directory.
-    if [[ "${module}" != . ]]; then
-        run+=("--path-prefix=${module}")
-    fi
-    run+=(${EXTRA[@]+"${EXTRA[@]}"} "${GQ_PACKAGES[@]}")
+    # golangci-lint 2 writes paths relative to the directory of the config
+    # it uses (run.relative-path-mode), which can be above the module, so a
+    # path prefix can't make them relative to working_dir. Absolute paths
+    # are made relative below.
+    run+=(--path-mode=abs ${EXTRA[@]+"${EXTRA[@]}"} "${GQ_PACKAGES[@]}")
     rm -f "${WORK}/out.json" "${WORK}/out.sarif"
     rc=0
     (cd "${module}" && "${LINTER}" "${run[@]}") 2> "${WORK}/err" || rc=$?
@@ -102,6 +110,8 @@ for module in "${GQ_MODULES[@]}"; do
             echo "  Install a newer golangci-lint with install_golangci_lint: its version output names the Go it was built with." >&2
         elif grep -q 'unsupported version of the configuration' "${WORK}/err"; then
             echo "  golangci-lint 2 needs a version: \"2\" configuration; golangci-lint migrate converts a version 1 one." >&2
+        elif grep -q 'unknown flag: --path-mode' "${WORK}/err"; then
+            echo "  This golangci-lint has no --path-mode option, which lint needs. Install a newer one with install_golangci_lint." >&2
         fi
         continue
     fi
@@ -110,7 +120,10 @@ for module in "${GQ_MODULES[@]}"; do
         echo "ERROR: golangci-lint logged an error in $(gq_label "${module}") (level=error above), so it did not check everything." >&2
         continue
     fi
-    if [[ ! -s "${WORK}/out.json" ]] || ! jq -c --arg mod "${module}" '[(.Issues // [])[] | . + {module: $mod}]' \
+    # shellcheck disable=SC2016 # jq program, not shell
+    if [[ ! -s "${WORK}/out.json" ]] || ! jq -c --arg mod "${module}" --arg root "${ROOT}/" --arg physical "${PHYSICAL}/" \
+        "${RELATIVE}"' [(.Issues // [])[] | . + {module: $mod}
+         | if (.Pos.Filename | type) == "string" then .Pos.Filename |= relative else . end]' \
         "${WORK}/out.json" > "${WORK}/found.json" 2> /dev/null; then
         ERRORS+=("${module}")
         echo "ERROR: golangci-lint wrote no JSON report in $(gq_label "${module}")." >&2
@@ -123,7 +136,10 @@ for module in "${GQ_MODULES[@]}"; do
     jq -s -c '.[0] + .[1]' "${WORK}/issues.json" "${WORK}/found.json" > "${WORK}/next.json"
     mv "${WORK}/next.json" "${WORK}/issues.json"
     if [[ "${SARIF}" == true && -s "${WORK}/out.sarif" ]]; then
-        jq -s -c '.[0] + (.[1].runs // [])' "${WORK}/runs.json" "${WORK}/out.sarif" > "${WORK}/next.json"
+        # shellcheck disable=SC2016 # jq program, not shell
+        jq -s -c --arg root "${ROOT}/" --arg physical "${PHYSICAL}/" "${RELATIVE}"' .[0] + ((.[1].runs // [])
+            | reduce (paths(type == "string") | select(length > 1 and .[-1] == "uri" and .[-2] == "artifactLocation")) as $p
+                (.; setpath($p; getpath($p) | relative)))' "${WORK}/runs.json" "${WORK}/out.sarif" > "${WORK}/next.json"
         mv "${WORK}/next.json" "${WORK}/runs.json"
     fi
 done

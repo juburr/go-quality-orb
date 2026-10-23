@@ -157,7 +157,12 @@ for module in "${GQ_MODULES[@]}"; do
     fi
     packages=("${GQ_PACKAGES[@]}")
     if [[ "${SPLIT}" == true && "${NODES}" -gt 1 ]]; then
+        # The same build settings as the tests, since -race and tags decide
+        # which packages have files to build.
         list_args=(list)
+        if [[ "${RACE}" == true ]]; then
+            list_args+=(-race)
+        fi
         if [[ -n "${TAGS}" ]]; then
             list_args+=("-tags=${TAGS}")
         fi
@@ -218,21 +223,30 @@ fi
 if [[ "${COVERAGE}" == true && ${#PROFILES[@]} -gt 0 ]]; then
     # The share of statements covered, over every module's profile. A block
     # that several test binaries report (with coverpkg) counts once, as
-    # covered if any of them ran it, as go tool cover counts it.
-    TOTAL=$(awk 'FNR == 1 && /^mode:/ { next }
+    # covered if any of them ran it, as go tool cover counts it. Prints the
+    # statements covered and in all.
+    COUNTS=$(awk 'FNR == 1 && /^mode:/ { next }
         NF == 3 {
             if (!($1 in statements)) { statements[$1] = $2; covered[$1] = 0 }
             if ($3 > 0) { covered[$1] = 1 }
         }
         END {
             for (block in statements) { all += statements[block]; if (covered[block]) { hit += statements[block] } }
-            if (all == 0) { print "none" } else { printf "%.1f\n", 100 * hit / all }
+            printf "%.0f %.0f\n", hit, all
         }' "${PROFILES[@]}")
-    echo "Total coverage: ${TOTAL}% of statements."
+    read -r HIT ALL <<< "${COUNTS}"
+    TOTAL=none
+    if [[ "${ALL}" -gt 0 ]]; then
+        TOTAL=$(awk -v hit="${HIT}" -v all="${ALL}" 'BEGIN { printf "%.1f\n", 100 * hit / all }')
+        echo "Total coverage: ${TOTAL}% of statements (${HIT} of ${ALL})."
+    else
+        echo "Total coverage: none, since the coverage profiles hold no statements."
+    fi
     printf '%s\n' "${TOTAL}" > "${GQ_BASE}/coverage-total.txt"
     if [[ -n "${COVERAGE_MIN}" ]]; then
-        if [[ "${TOTAL}" == none ]] || awk -v total="${TOTAL}" -v min="${COVERAGE_MIN}" 'BEGIN { exit !(total < min) }'; then
-            echo "ERROR: Total coverage is ${TOTAL}%, below coverage_min (${COVERAGE_MIN}%)." >&2
+        # The exact share, not the rounded one: 1999 of 2000 is 100.0%.
+        if [[ "${ALL}" -eq 0 ]] || awk -v hit="${HIT}" -v all="${ALL}" -v min="${COVERAGE_MIN}" 'BEGIN { exit !(100 * hit < min * all) }'; then
+            echo "ERROR: Total coverage is ${TOTAL}% (${HIT} of ${ALL} statements), below coverage_min (${COVERAGE_MIN}%)." >&2
             exit 1
         fi
         echo "Passed: coverage is at least ${COVERAGE_MIN}%."

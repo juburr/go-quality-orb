@@ -75,7 +75,10 @@ snapshot "${WORK}/before"
 if [[ -s "${WORK}/before" ]]; then
     echo "Note: $(gq_plural "$(wc -l < "${WORK}/before")" "file already differs" "files already differ") from git's index; only what go generate changes in them is reported."
 fi
-LOG="${GQ_BASE}.log"
+# go generate's output is collected here and copied to output_dir after the
+# second snapshot: output_dir can be in the checkout, where a report written
+# in between would count as a change go generate made.
+LOG="${WORK}/generate.log"
 : > "${LOG}"
 ERRORS=()
 for module in "${GQ_MODULES[@]}"; do
@@ -89,11 +92,13 @@ for module in "${GQ_MODULES[@]}"; do
     fi
 done
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    cp "${LOG}" "${GQ_BASE}.log"
     echo "ERROR: go generate could not run in $(gq_labels "${ERRORS[@]}"), so the step fails whatever report_only says." >&2
     echo "  Install the generators it runs in an earlier step." >&2
     exit 1
 fi
 snapshot "${WORK}/after"
+cp "${LOG}" "${GQ_BASE}.log"
 
 # A path changed when its line differs: new, gone, or another hash.
 CHANGED=()
