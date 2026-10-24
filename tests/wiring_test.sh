@@ -11,7 +11,10 @@
 #     when junit is true;
 #   - the install command offers every tool there is an install_<tool>
 #     command for, with that command's default version;
-#   - the README documents every command, and names each install_<tool>.
+#   - the README documents every command, and names each install_<tool>;
+#   - every run step has a name. CI runs orb-tools review without its RC008
+#     check, which takes any key named run for a run step, such as the run
+#     parameters of test and generate_check (go test -run, go generate -run).
 #
 # Run from a checkout:
 #   bash tests/wiring_test.sh
@@ -36,6 +39,42 @@ param_vars() {
     if grep -qE '^ +gq_download_base_url\b' <<< "${body}"; then
         echo PARAM_DOWNLOAD_BASE_URL
     fi
+}
+
+# unnamed_runs FILE: "<line>: <problem>" for each run step in FILE without a
+# name: a "- run:" mapping whose own keys have no name, or an empty one, and
+# a "- run: <command>" string, which can't have one.
+unnamed_runs() {
+    awk '
+        function close_step() {
+            if (open && !named) { print start ": this run step has no name" }
+            open = 0
+        }
+        {
+            match($0, /^ */)
+            indent = RLENGTH
+            if (open && NF && indent <= dash) { close_step() }
+            if ($0 ~ /^ *- run:/) {
+                close_step()
+                dash = indent
+                rest = $0
+                sub(/^ *- run:[ ]*/, "", rest)
+                if (rest != "") { print FNR ": this run step is a string, which has no name" }
+                else { open = 1; named = 0; keys = -1; start = FNR }
+                next
+            }
+            if (open && NF) {
+                if (keys < 0) { keys = indent }
+                if (indent == keys && $0 ~ /^ *name:/) {
+                    value = $0
+                    sub(/^ *name:[ ]*/, "", value)
+                    gsub(/["\047 ]/, "", value)
+                    if (value != "") { named = 1 }
+                }
+            }
+        }
+        END { close_step() }
+    ' "$1"
 }
 
 # params FILE: the parameters a command declares.
@@ -96,6 +135,14 @@ for yml in src/commands/*.yml; do
     fi
 done
 
+# Every run step has a name, in place of orb-tools review's RC008.
+for yml in src/commands/*.yml src/jobs/*.yml; do
+    [[ -f "${yml}" ]] || continue
+    while IFS= read -r problem; do
+        [[ -n "${problem}" ]] && fail "${yml}:${problem}"
+    done < <(unnamed_runs "${yml}")
+done
+
 # The install command and the per-tool install commands.
 for yml in src/commands/install_*.yml; do
     tool=${yml##*/install_}
@@ -120,4 +167,4 @@ if [[ "${FAILURES}" -gt 0 ]]; then
     echo "${FAILURES} failure(s)"
     exit 1
 fi
-echo "ok: every command passes every parameter its scripts read, uses every parameter it declares, and stores its reports"
+echo "ok: every command passes every parameter its scripts read, uses every parameter it declares, stores its reports, and names its run steps"
