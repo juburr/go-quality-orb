@@ -82,7 +82,8 @@ for module in "${GQ_MODULES[@]}"; do
         gq_tail "${WORK}/list.err" 20
         continue
     fi
-    jq -r 'select(.Action == "output" and (.Output | test("^Fuzz[A-Za-z0-9_]*\n$"))) | "\(.Package)\t\(.Output | rtrimstr("\n"))"' \
+    # A name is a Go identifier, which can hold any Unicode letter or digit.
+    jq -r 'select(.Action == "output" and (.Output | test("^Fuzz[\\p{L}\\p{Nd}_]*\n$"))) | "\(.Package)\t\(.Output | rtrimstr("\n"))"' \
         "${WORK}/list.json" > "${WORK}/targets"
     while IFS=$'\t' read -r package name; do
         if [[ -n "${TARGETS}" ]] && ! LC_ALL=C grep -qE -- "${TARGETS}" <<< "${name}"; then

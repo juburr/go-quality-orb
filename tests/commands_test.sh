@@ -97,7 +97,7 @@ EOF
 
 # circleci: env subst expands $NAME and ${NAME} on stdin, as the real CLI
 # does; tests split gives node CIRCLE_NODE_INDEX every CIRCLE_NODE_TOTAL-th
-# line, and records its arguments.
+# line, and records its arguments. STUB_SPLIT=crash makes it fail.
 {
     echo '#!/usr/bin/env bash'
     cat << 'EOF'
@@ -105,6 +105,7 @@ if [[ "$1 $2" == "tests split" ]]; then
 EOF
     record
     cat << 'EOF'
+    if [[ "${STUB_SPLIT:-}" == crash ]]; then echo "Error: could not read the timings" >&2; exit 1; fi
     awk -v n="${CIRCLE_NODE_TOTAL:-1}" -v i="${CIRCLE_NODE_INDEX:-0}" '(NR - 1) % n == i'
     exit 0
 fi
@@ -685,6 +686,10 @@ run test "working_dir=${CLEAN}" split_tests=true coverage_min=10 -- CIRCLE_NODE_
 check "coverage_min can't be checked across nodes" said "coverage_min can't be checked when split_tests splits the tests"
 run test "working_dir=${CLEAN}" split_tests=true -- CIRCLE_NODE_TOTAL=1
 check "a parallelism of 1 doesn't split" not_called_with circleci tests split
+run test "working_dir=${CLEAN}" split_tests=true -- CIRCLE_NODE_TOTAL=2 CIRCLE_NODE_INDEX=0 STUB_SPLIT=crash
+check "a splitter that fails fails the step" failed
+check "saying so" said "circleci tests split could not split the packages of example.com/clean"
+check "rather than run nothing" not_called_with gotestsum --format
 mkdir -p "${CLEAN}/raceonly"
 printf '//go:build race\n\npackage raceonly\n' > "${CLEAN}/raceonly/raceonly.go"
 run test "working_dir=${CLEAN}" split_tests=true race=true -- CIRCLE_NODE_TOTAL=2 CIRCLE_NODE_INDEX=1
@@ -720,6 +725,11 @@ printf '//go:build race\n\npackage greet\n\nimport "testing"\n\nfunc FuzzRace(f 
 run fuzz "working_dir=${CLEAN}" targets=FuzzRace fuzz_time=20x "extra_args=-race"
 check "build flags in extra_args also pick the fuzz tests" said "Fuzzing example.com/clean/greet FuzzRace for 20x..."
 check "and they pass" said "Passed: 1 fuzz test ran for 20x each without failing."
+reset_repo
+printf 'package greet\n\nimport "testing"\n\nfunc Fuzz\303\211(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, s string) {})\n}\n' \
+    > "${CLEAN}/greet/unicode_fuzz_test.go"
+run fuzz "working_dir=${CLEAN}" "targets=^Fuzz[^P]" fuzz_time=20x
+check "a fuzz test whose name isn't ASCII is fuzzed too" said "Fuzzing example.com/clean/greet Fuzz$(printf '\303\211') for 20x..."
 reset_repo
 
 begin "fuzz: a failing input is a finding"

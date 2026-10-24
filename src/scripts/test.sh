@@ -171,10 +171,16 @@ for module in "${GQ_MODULES[@]}"; do
             gq_tail "${WORK}/list.err"
             exit 1
         fi
+        # Read from a file, since a process substitution would hide a
+        # splitter that fails, and its empty output would skip the tests.
+        if ! circleci tests split --split-by=timings --timings-type=classname < "${WORK}/packages" > "${WORK}/share"; then
+            echo "ERROR: circleci tests split could not split the packages of $(gq_label "${module}"); its messages are above." >&2
+            exit 1
+        fi
         packages=()
         while IFS= read -r package; do
             [[ -n "${package}" ]] && packages+=("${package}")
-        done < <(circleci tests split --split-by=timings --timings-type=classname < "${WORK}/packages")
+        done < "${WORK}/share"
         echo "Node $((${CIRCLE_NODE_INDEX:-0} + 1)) of ${NODES} runs ${#packages[@]} of the $(wc -l < "${WORK}/packages") packages in $(gq_label "${module}")."
         if [[ ${#packages[@]} -eq 0 ]]; then
             continue
