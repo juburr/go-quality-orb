@@ -1,0 +1,10 @@
+version: 2.1
+
+description: >
+  Verified installs of Go, golangci-lint, gotestsum, gofumpt and benchstat, and commands that hold Go code to a
+  standard on every commit: formatting, go mod tidy, go vet, golangci-lint, go generate drift, tests with the race
+  detector and coverage, fuzzing, cross-compiling and benchmark comparisons, with JUnit, SARIF and diff reports.
+
+display:
+  home_url: "https://github.com/juburr/go-quality-orb"
+  source_url: "https://github.com/juburr/go-quality-orb"

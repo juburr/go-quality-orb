@@ -1,0 +1,34 @@
+description: >
+  Compare a branch's benchmarks with main's on the same machine, and fail
+  when one is significantly slower, or allocates more, by over 10%.
+  Benchmarks are noisy on shared CI machines, so bench alternates runs of
+  the two commits and lets benchstat decide what is significant; leave
+  max_regression empty to report the comparison without ever failing.
+
+usage:
+  version: 2.1
+  orbs:
+    go-quality: juburr/go-quality-orb@0.1.0
+  jobs:
+    bench:
+      docker:
+        - image: cimg/go:1.27
+      resource_class: large
+      steps:
+        - checkout
+        - run:
+            name: Fetch main
+            command: git fetch origin main
+        - go-quality/install:
+            tools: benchstat
+        - go-quality/bench:
+            base_ref: origin/main
+            count: "10"
+            max_regression: "10"
+  workflows:
+    bench:
+      jobs:
+        - bench:
+            filters:
+              branches:
+                ignore: main

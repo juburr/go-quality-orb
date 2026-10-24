@@ -1,0 +1,34 @@
+description: >
+  Hold a Go service to a standard on every push: install verified
+  golangci-lint and gotestsum, then check formatting, go.mod and go.sum,
+  go vet, golangci-lint, generated code, the tests with the race detector and
+  coverage, and that it builds for every platform it ships on. Findings fail
+  the job; the reports are stored even when it fails, and JUnit results show
+  in the Tests tab.
+
+usage:
+  version: 2.1
+  orbs:
+    go-quality: juburr/go-quality-orb@0.1.0
+  jobs:
+    quality:
+      docker:
+        - image: cimg/go:1.27
+      steps:
+        - checkout
+        - go-quality/install
+        - go-quality/fmt
+        - go-quality/mod_tidy
+        - go-quality/vet
+        - go-quality/lint
+        - go-quality/generate_check
+        - go-quality/test:
+            race: true
+            shuffle: "on"
+            coverage_min: "70"
+        - go-quality/build:
+            platforms: linux/amd64 linux/arm64
+  workflows:
+    quality:
+      jobs:
+        - quality

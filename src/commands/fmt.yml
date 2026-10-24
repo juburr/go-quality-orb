@@ -1,0 +1,91 @@
+description: >
+  Checks that the Go files in working_dir and below are formatted, with gofmt
+  (the default, which comes with Go) or gofumpt (install it with
+  install_gofumpt). It checks every .go file go ./... patterns cover, whatever
+  its build tags, skipping vendor and testdata directories and those whose
+  names start with "." or "_", and writes the list of unformatted files and
+  the changes the formatter would make (<report_name>.diff). The step fails
+  when a file isn't formatted, unless report_only is true; it always fails
+  when a file can't be parsed.
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it, and the files below it
+      are checked.
+  formatter:
+    type: enum
+    enum: ["gofmt", "gofumpt"]
+    default: gofmt
+    description: >
+      gofmt, Go's own formatter, or gofumpt, a stricter superset of it.
+  simplify:
+    type: boolean
+    default: false
+    description: >
+      Also require gofmt's simplifications (gofmt -s), such as dropping
+      redundant types in composite literals. gofumpt always simplifies.
+  exclude:
+    type: string
+    default: ""
+    description: >
+      Directories to skip, relative to working_dir, separated by commas or
+      spaces, such as third_party. Environment variables are expanded.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: gofmt
+    description: >
+      The reports' file name, without extension: <report_name>.txt (the
+      unformatted files), .diff and junit/<report_name>.xml. Give each run of
+      this command in a job its own.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one failing test case per unformatted file, and
+      show it in CircleCI's Tests tab.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A file the formatter can't parse still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: Check formatting with << parameters.formatter >>
+      working_directory: << parameters.working_dir >>
+      environment:
+        PARAM_EXCLUDE: << parameters.exclude >>
+        PARAM_FORMATTER: << parameters.formatter >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_SIMPLIFY: << parameters.simplify >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/fmt.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always

@@ -1,0 +1,158 @@
+description: >
+  Installs the Go quality tools named in tools, each verified against this
+  orb's checksum table, through the install command for that tool
+  (install_golangci_lint, install_gotestsum, ...), which can also be used on
+  its own. golangci-lint, gotestsum and gofumpt are release binaries, and Go a
+  release archive, downloaded for amd64 or arm64, picked from the machine's
+  CPU architecture. benchstat publishes no binaries, so it is built with a
+  pinned Go release and checked against the table. Run this before the orb's
+  other commands.
+parameters:
+  tools:
+    type: string
+    default: "golangci-lint,gotestsum"
+    description: >
+      The tools to install, separated by commas or spaces: any of go,
+      golangci-lint, gotestsum, gofumpt and benchstat. An unknown name fails
+      the step. go installs first, so the rest find it on the PATH.
+  caching:
+    type: boolean
+    default: true
+    description: >
+      Cache each tool's verified download (or, for benchstat, its verified
+      build) between jobs. Only verified files are cached, and a cached file
+      is verified again before it is used.
+  download_base_url:
+    type: string
+    default: ""
+    description: >
+      Base URL of an internal mirror of GitHub releases, such as an
+      Artifactory or Nexus remote repository, to download golangci-lint,
+      gotestsum and gofumpt from instead of https://github.com. It replaces
+      https://github.com in each release URL, so the mirror must serve the
+      same paths. It must be an https:// URL, without credentials
+      (user:password@) or a query or fragment, which would show in the log.
+      What is downloaded is still verified against this orb's checksum table.
+  go_download_base_url:
+    type: string
+    default: ""
+    description: >
+      Base URL of an internal mirror of https://dl.google.com/go, to download
+      Go release archives from: Go itself, and the Go release that builds
+      benchstat when the job's go is not that release. The same rules as
+      download_base_url apply.
+  install_path:
+    type: string
+    default: ""
+    description: >
+      Absolute path of the directory to install golangci-lint, gotestsum,
+      gofumpt and benchstat into. It is created if needed and added to the
+      PATH of later steps when it isn't already on it, and must be writable
+      without root. Environment variables are expanded. Defaults to
+      $HOME/bin.
+  go_install_path:
+    type: string
+    default: ""
+    description: >
+      Absolute path of the directory to install Go into (its GOROOT), when
+      tools names go. It must be missing, hold no files, or be a Go
+      installation install_go installed before. Environment variables are expanded.
+      Defaults to $HOME/sdk/go.
+  verify_checksums:
+    type: enum
+    enum: ["false", "known_versions", "strict"]
+    default: strict
+    description: >
+      SHA-512 verification against this orb's checksum table, for every tool.
+      "strict" (default) fails before downloading anything when a version has
+      no checksum in the table. "known_versions" verifies listed versions and
+      installs unlisted versions unverified, with a warning. "false" skips
+      verification and is not recommended.
+  go_version:
+    type: string
+    default: "1.27.3"
+    description: The Go version, when tools names go. Environment variables are expanded.
+  golangci_lint_version:
+    type: string
+    default: "2.15.0"
+    description: The golangci-lint version, when tools names it. Environment variables are expanded.
+  gotestsum_version:
+    type: string
+    default: "1.13.0"
+    description: The gotestsum version, when tools names it. Environment variables are expanded.
+  gofumpt_version:
+    type: string
+    default: "0.12.0"
+    description: The gofumpt version, when tools names it. Environment variables are expanded.
+  benchstat_version:
+    type: string
+    default: "0.0.0-20261009192801-be2c69fb417e"
+    description: >
+      The benchstat version (a golang.org/x/perf pseudo-version), when tools
+      names it. Environment variables are expanded.
+steps:
+  - run:
+      name: Check the tools to install
+      environment:
+        PARAM_TOOLS: << parameters.tools >>
+      command: << include(scripts/install_tools.sh) >>
+  - when:
+      condition:
+        matches:
+          pattern: "^(.*[ ,])?go([ ,].*)?$"
+          value: << parameters.tools >>
+      steps:
+        - install_go:
+            caching: << parameters.caching >>
+            download_base_url: << parameters.go_download_base_url >>
+            install_path: << parameters.go_install_path >>
+            verify_checksums: << parameters.verify_checksums >>
+            version: << parameters.go_version >>
+  - when:
+      condition:
+        matches:
+          pattern: "^(.*[ ,])?golangci-lint([ ,].*)?$"
+          value: << parameters.tools >>
+      steps:
+        - install_golangci_lint:
+            caching: << parameters.caching >>
+            download_base_url: << parameters.download_base_url >>
+            install_path: << parameters.install_path >>
+            verify_checksums: << parameters.verify_checksums >>
+            version: << parameters.golangci_lint_version >>
+  - when:
+      condition:
+        matches:
+          pattern: "^(.*[ ,])?gotestsum([ ,].*)?$"
+          value: << parameters.tools >>
+      steps:
+        - install_gotestsum:
+            caching: << parameters.caching >>
+            download_base_url: << parameters.download_base_url >>
+            install_path: << parameters.install_path >>
+            verify_checksums: << parameters.verify_checksums >>
+            version: << parameters.gotestsum_version >>
+  - when:
+      condition:
+        matches:
+          pattern: "^(.*[ ,])?gofumpt([ ,].*)?$"
+          value: << parameters.tools >>
+      steps:
+        - install_gofumpt:
+            caching: << parameters.caching >>
+            download_base_url: << parameters.download_base_url >>
+            install_path: << parameters.install_path >>
+            verify_checksums: << parameters.verify_checksums >>
+            version: << parameters.gofumpt_version >>
+  - when:
+      condition:
+        matches:
+          pattern: "^(.*[ ,])?benchstat([ ,].*)?$"
+          value: << parameters.tools >>
+      steps:
+        - install_benchstat:
+            caching: << parameters.caching >>
+            download_base_url: << parameters.go_download_base_url >>
+            install_path: << parameters.install_path >>
+            verify_checksums: << parameters.verify_checksums >>
+            version: << parameters.benchstat_version >>

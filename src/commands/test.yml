@@ -1,0 +1,209 @@
+description: >
+  Runs the tests of each module with gotestsum, which runs go test and writes
+  JUnit XML for CircleCI's Tests tab, with go test's JSON events and a
+  coverage profile, its summary and an HTML view per module. It can run the
+  tests with the race detector, in a shuffled order, again when they fail (to
+  tell flaky tests apart), split across parallel nodes by timing, and fail
+  when total coverage is below coverage_min. A failing test, or a package that
+  doesn't build, fails the step. Install gotestsum first (the install command
+  does by default).
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  packages:
+    type: string
+    default: "./..."
+    description: >
+      The package patterns to test in each module, separated by commas or
+      spaces. Environment variables are expanded.
+  race:
+    type: boolean
+    default: false
+    description: >
+      Run the tests with the race detector (go test -race). It needs cgo and a
+      C compiler, which cimg/go has, and makes tests several times slower.
+  shuffle:
+    type: string
+    default: "off"
+    description: >
+      Run tests and benchmarks in a random order (go test -shuffle): off, on,
+      or a seed to repeat an order gotestsum printed. Environment variables
+      are expanded.
+  count:
+    type: string
+    default: "1"
+    description: >
+      Run each test this many times (go test -count). 1, the default, also
+      keeps go test from reusing cached results. Environment variables are
+      expanded.
+  timeout:
+    type: string
+    default: ""
+    description: >
+      Fail a test binary that runs longer than this (go test -timeout), such
+      as 20m. Empty keeps go test's 10m. Environment variables are expanded.
+  tags:
+    type: string
+    default: ""
+    description: >
+      Build tags (go -tags), separated by commas. Environment variables are
+      expanded.
+  run:
+    type: string
+    default: ""
+    description: >
+      Only run the tests matching this regular expression (go test -run).
+      Environment variables are expanded.
+  skip:
+    type: string
+    default: ""
+    description: >
+      Skip the tests matching this regular expression (go test -skip).
+      Environment variables are expanded.
+  short:
+    type: boolean
+    default: false
+    description: Tell long-running tests to shorten their run time (go test -short).
+  coverage:
+    type: boolean
+    default: true
+    description: >
+      Write a coverage profile per module (go test -coverprofile), with its
+      summary (go tool cover -func) and an HTML view, and print the total.
+  covermode:
+    type: enum
+    enum: ["", "set", "count", "atomic"]
+    default: ""
+    description: >
+      How coverage is counted (go test -covermode). Empty keeps go test's
+      default: set, or atomic with race.
+  coverpkg:
+    type: string
+    default: ""
+    description: >
+      Count coverage in these packages, not only in the package under test (go
+      test -coverpkg), such as ./... for every package of the module.
+      Environment variables are expanded.
+  coverage_min:
+    type: string
+    default: ""
+    description: >
+      Fail the step when the share of statements the tests cover, over every
+      module, is below this percentage, such as 80. Empty checks nothing. It
+      can't be checked with split_tests across more than one node. Environment
+      variables are expanded.
+  rerun_fails:
+    type: string
+    default: "0"
+    description: >
+      Run failed tests again, up to this many times, and pass when they pass
+      (gotestsum --rerun-fails), with a report of the tests that needed it. 0
+      runs nothing again. gotestsum doesn't rerun when more than 10 tests
+      fail. Environment variables are expanded.
+  format:
+    type: string
+    default: pkgname-and-test-fails
+    description: >
+      How gotestsum prints the results (gotestsum --format): pkgname,
+      pkgname-and-test-fails, testname, dots, standard-verbose, and the others
+      gotestsum lists.
+  split_tests:
+    type: boolean
+    default: false
+    description: >
+      With a job parallelism above 1, run only this node's share of the
+      packages, split by the timings of earlier JUnit results (circleci tests
+      split --split-by=timings).
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More go test arguments, split like shell words. Nothing in them is
+      expanded or run; environment variables are expanded before splitting.
+      -json and -coverprofile are refused, since gotestsum and coverage set
+      them.
+  no_output_timeout:
+    type: string
+    default: 10m
+    description: >
+      How long the step may run without printing anything before CircleCI
+      stops it, such as 30m for a long test suite.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: go-test
+    description: >
+      The reports' file name, without extension:
+      <report_name>/<module>/events.json, coverage.out, coverage.txt and
+      coverage.html, and junit/<report_name>/<module>/junit.xml. Give each run
+      of this command in a job its own.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one test case per test, written by gotestsum, and
+      show it in CircleCI's Tests tab.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: go test
+      working_directory: << parameters.working_dir >>
+      no_output_timeout: << parameters.no_output_timeout >>
+      environment:
+        PARAM_COUNT: << parameters.count >>
+        PARAM_COVERAGE: << parameters.coverage >>
+        PARAM_COVERAGE_MIN: << parameters.coverage_min >>
+        PARAM_COVERMODE: << parameters.covermode >>
+        PARAM_COVERPKG: << parameters.coverpkg >>
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_FORMAT: << parameters.format >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PACKAGES: << parameters.packages >>
+        PARAM_RACE: << parameters.race >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_RERUN_FAILS: << parameters.rerun_fails >>
+        PARAM_RUN: << parameters.run >>
+        PARAM_SHORT: << parameters.short >>
+        PARAM_SHUFFLE: << parameters.shuffle >>
+        PARAM_SKIP: << parameters.skip >>
+        PARAM_SPLIT_TESTS: << parameters.split_tests >>
+        PARAM_TAGS: << parameters.tags >>
+        PARAM_TIMEOUT: << parameters.timeout >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/test.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always

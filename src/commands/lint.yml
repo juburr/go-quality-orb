@@ -1,0 +1,124 @@
+description: >
+  Runs golangci-lint 2 in each module, with the module's own configuration
+  (.golangci.yml, found the way golangci-lint finds it, or config), and writes
+  its issues as JSON, SARIF and JUnit, with paths relative to working_dir. The
+  step fails when golangci-lint finds issues, unless report_only is true; it
+  always fails when golangci-lint can't complete: code that doesn't compile
+  (typecheck issues), a configuration it can't load, or a module whose go line
+  asks for a newer Go than golangci-lint was built with. Install golangci-lint
+  first (the install command does by default).
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  packages:
+    type: string
+    default: "./..."
+    description: >
+      The package patterns to lint in each module, separated by commas or
+      spaces. Environment variables are expanded.
+  config:
+    type: string
+    default: ""
+    description: >
+      A golangci-lint configuration file to use for every module
+      (golangci-lint --config), relative to working_dir. It must be a version
+      2 configuration; golangci-lint migrate converts an older one. Empty lets
+      golangci-lint find the module's own. Environment variables are expanded.
+  new_from_rev:
+    type: string
+    default: ""
+    description: >
+      Report only issues in code changed since this git revision
+      (golangci-lint --new-from-rev), such as origin/main, to gate a pull
+      request on the issues it adds. Environment variables are expanded.
+  timeout:
+    type: string
+    default: ""
+    description: >
+      Stop golangci-lint after this long (golangci-lint --timeout), such as
+      5m. Empty means no timeout. Environment variables are expanded.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More golangci-lint run arguments, split like shell words. Nothing in
+      them is expanded or run; environment variables are expanded before
+      splitting. --output.*, --path-prefix, --path-mode and --issues-exit-code
+      are refused, since this command sets the outputs it reads.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: golangci-lint
+    description: >
+      The reports' file name, without extension: <report_name>.json, .sarif,
+      .log and junit/<report_name>.xml. Give each run of this command in a job
+      its own.
+  sarif:
+    type: boolean
+    default: true
+    description: Also write a SARIF 2.1.0 report, <report_name>.sarif, with a run per module.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one failing test case per issue, and show it in
+      CircleCI's Tests tab.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A golangci-lint that can't complete still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: golangci-lint run
+      working_directory: << parameters.working_dir >>
+      environment:
+        PARAM_CONFIG: << parameters.config >>
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_NEW_FROM_REV: << parameters.new_from_rev >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PACKAGES: << parameters.packages >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_SARIF: << parameters.sarif >>
+        PARAM_TIMEOUT: << parameters.timeout >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/lint.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always

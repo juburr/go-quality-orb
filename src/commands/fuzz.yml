@@ -1,0 +1,131 @@
+description: >
+  Fuzzes each fuzz test (func FuzzXxx) in each module for fuzz_time, one at a
+  time, since go test -fuzz runs one fuzz test per package. An input a fuzz
+  test fails on is copied to <report_name>/<package dir>/testdata/fuzz, ready
+  to add to the repository as a regression test. The step fails when fuzzing
+  finds a failing input, unless report_only is true; it always fails when a
+  package doesn't build or fuzzing ends another way. Fuzzing takes fuzz_time
+  for every fuzz test, so name the ones to run with targets.
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  packages:
+    type: string
+    default: "./..."
+    description: >
+      The package patterns to fuzz in each module, separated by commas or
+      spaces. Environment variables are expanded.
+  targets:
+    type: string
+    default: ""
+    description: >
+      Only fuzz the fuzz tests whose names match this regular expression, such
+      as ^FuzzParse. Empty fuzzes all of them. Environment variables are
+      expanded.
+  fuzz_time:
+    type: string
+    default: 30s
+    description: >
+      How long to fuzz each fuzz test (go test -fuzztime), such as 30s or 5m,
+      or a number of inputs, such as 10000x. Environment variables are
+      expanded.
+  parallel:
+    type: string
+    default: ""
+    description: >
+      How many fuzzing processes to run at once (go test -parallel). Empty
+      uses GOMAXPROCS. Environment variables are expanded.
+  tags:
+    type: string
+    default: ""
+    description: >
+      Build tags (go -tags), separated by commas. Environment variables are
+      expanded.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More go test arguments, split like shell words. Nothing in them is
+      expanded or run; environment variables are expanded before splitting.
+      -run, -fuzz and -fuzztime are refused, since this command sets them for
+      each fuzz test.
+  no_output_timeout:
+    type: string
+    default: 10m
+    description: >
+      How long the step may run without printing anything before CircleCI
+      stops it, such as 30m for a long fuzz_time.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: go-fuzz
+    description: >
+      The reports' file name, without extension: <report_name>/<package
+      dir>/<FuzzTest>.log and testdata/fuzz, and junit/<report_name>.xml. Give
+      each run of this command in a job its own.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one test case per fuzz test, and show it in
+      CircleCI's Tests tab.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A package that doesn't build still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: go test -fuzz
+      working_directory: << parameters.working_dir >>
+      no_output_timeout: << parameters.no_output_timeout >>
+      environment:
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_FUZZ_TIME: << parameters.fuzz_time >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PACKAGES: << parameters.packages >>
+        PARAM_PARALLEL: << parameters.parallel >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_TAGS: << parameters.tags >>
+        PARAM_TARGETS: << parameters.targets >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/fuzz.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always

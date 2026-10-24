@@ -1,0 +1,87 @@
+description: >
+  Checks that go.mod and go.sum are tidy in each module, with go mod tidy
+  -diff, which changes nothing and prints the changes go mod tidy would make
+  (written to <report_name>.diff). It needs Go 1.23 or newer, and fails the
+  step, before checking anything, when a module runs an older Go. The step
+  fails when a module isn't tidy, unless report_only is true; it always fails
+  when go mod tidy can't complete, such as when it can't download a module.
+  Each module is checked on its own, as go mod tidy does, so a go.work
+  workspace's other modules must be reachable as go.mod requires them.
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More go mod tidy arguments, split like shell words. Nothing in them is
+      expanded or run; environment variables are expanded before splitting.
+      Such as -compat=1.26 or -e. -diff is refused, since this command always
+      passes it.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts and store_test_results.
+  report_name:
+    type: string
+    default: go-mod-tidy
+    description: >
+      The reports' file name, without extension: <report_name>.diff and
+      junit/<report_name>.xml. Give each run of this command in a job its own.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Also write JUnit XML, one test case per module, and show it in
+      CircleCI's Tests tab.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A go mod tidy that can't complete still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: go mod tidy -diff
+      working_directory: << parameters.working_dir >>
+      environment:
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/mod_tidy.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always

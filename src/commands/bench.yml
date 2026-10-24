@@ -1,0 +1,155 @@
+description: >
+  Runs the benchmarks of each module and summarizes them with benchstat when
+  it is installed. With base_ref, it runs them on that commit too, in a git
+  worktree on the same machine, one run of each in turn so both see the same
+  load, and compares them with benchstat (install it with install_benchstat).
+  Benchmarks are noisy on shared machines, so this reports and never fails on
+  a slowdown unless max_regression is set; a benchmark that fails, or a
+  package that doesn't build, always fails the step.
+parameters:
+  working_dir:
+    type: string
+    default: "."
+    description: >
+      Directory to run in: modules are relative to it.
+  modules:
+    type: string
+    default: "."
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+      Environment variables are expanded.
+  packages:
+    type: string
+    default: "./..."
+    description: >
+      The package patterns to benchmark in each module, separated by commas or
+      spaces. Environment variables are expanded.
+  bench:
+    type: string
+    default: "."
+    description: >
+      Run the benchmarks matching this regular expression (go test -bench).
+      Environment variables are expanded.
+  count:
+    type: string
+    default: "6"
+    description: >
+      Run each benchmark this many times (go test -count), on each side of a
+      comparison. benchstat needs at least 6 runs to compute confidence
+      intervals, and 10 or more makes small changes visible. Environment
+      variables are expanded.
+  benchtime:
+    type: string
+    default: ""
+    description: >
+      Run each benchmark for this long (go test -benchtime), such as 2s, or
+      this many times, such as 1000x. Empty keeps go test's 1s. Environment
+      variables are expanded.
+  benchmem:
+    type: boolean
+    default: true
+    description: Report memory allocations per operation too (go test -benchmem).
+  cpu:
+    type: string
+    default: ""
+    description: >
+      Run each benchmark with each of these GOMAXPROCS values (go test -cpu),
+      such as 1,4. Environment variables are expanded.
+  timeout:
+    type: string
+    default: ""
+    description: >
+      Fail a test binary that runs longer than this (go test -timeout). Empty
+      keeps go test's 10m. Environment variables are expanded.
+  tags:
+    type: string
+    default: ""
+    description: >
+      Build tags (go -tags), separated by commas. Environment variables are
+      expanded.
+  base_ref:
+    type: string
+    default: ""
+    description: >
+      A git revision to compare with, such as origin/main or a commit, which
+      must be in the checkout (fetch it in an earlier step). Empty runs this
+      commit's benchmarks only. Environment variables are expanded.
+  max_regression:
+    type: string
+    default: ""
+    description: >
+      Fail the step when a benchmark's time, memory or allocations per
+      operation is worse than at base_ref by more than this percentage, such
+      as 10, and benchstat says the change is significant. Empty reports
+      without failing. Environment variables are expanded.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More go test arguments, split like shell words. Nothing in them is
+      expanded or run; environment variables are expanded before splitting.
+      -bench, -count, -run and -json are refused, since this command sets
+      them.
+  no_output_timeout:
+    type: string
+    default: 10m
+    description: >
+      How long the step may run without printing anything before CircleCI
+      stops it, such as 30m for a long benchmark suite.
+  output_dir:
+    type: string
+    default: /tmp/go-quality-reports
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to
+      store_artifacts.
+  report_name:
+    type: string
+    default: go-bench
+    description: >
+      The reports' file name, without extension: <report_name>.txt (this
+      commit's results), .base.txt, .log, .benchstat.txt and .benchstat.csv.
+      Give each run of this command in a job its own.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A benchmark that fails still fails it.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store output_dir as job artifacts under go-quality-reports/, including when the step fails.
+steps:
+  - run:
+      name: go test -bench
+      working_directory: << parameters.working_dir >>
+      no_output_timeout: << parameters.no_output_timeout >>
+      environment:
+        PARAM_BASE_REF: << parameters.base_ref >>
+        PARAM_BENCH: << parameters.bench >>
+        PARAM_BENCHMEM: << parameters.benchmem >>
+        PARAM_BENCHTIME: << parameters.benchtime >>
+        PARAM_COUNT: << parameters.count >>
+        PARAM_CPU: << parameters.cpu >>
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_MAX_REGRESSION: << parameters.max_regression >>
+        PARAM_MODULES: << parameters.modules >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PACKAGES: << parameters.packages >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_TAGS: << parameters.tags >>
+        PARAM_TIMEOUT: << parameters.timeout >>
+        SCRIPT_GO_QUALITY_LIB: << include(scripts/lib/go_quality.sh) >>
+      command: << include(scripts/bench.sh) >>
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: go-quality-reports
+            when: always
