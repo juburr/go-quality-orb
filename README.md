@@ -112,7 +112,7 @@ Add the orb, install the tools, check the code. Copy this into `.circleci/config
 version: 2.1
 
 orbs:
-  go-quality: juburr/go-quality-orb@0.1.0
+  go-quality: juburr/go-quality-orb@0.1.1
 
 jobs:
   quality:
