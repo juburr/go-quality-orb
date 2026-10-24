@@ -77,6 +77,13 @@ for module in "${GQ_MODULES[@]}"; do
     ERRORS+=("${module}")
     echo "ERROR: go mod tidy -diff could not complete in $(gq_label "${module}") (exit code ${rc}). Its output:" >&2
     gq_tail "${WORK}/err"
+    # go mod tidy ignores go.work, so it looks up a workspace's other
+    # modules as it would without one.
+    workspace=$(cd "${module}" && go env GOWORK 2> /dev/null) || workspace=""
+    if [[ -n "${workspace}" && "${workspace}" != off ]]; then
+        echo "  go mod tidy ignores the workspace in ${workspace}: a module that $(gq_label "${module}") finds only through it" >&2
+        echo "  needs a replace directive in its go.mod, or leave this module out of modules." >&2
+    fi
     CASES=$(jq -c --arg mod "${module}" --rawfile log "${WORK}/err" \
         '. + [{classname: "go mod tidy", name: $mod, status: "failed", message: "go mod tidy -diff could not complete", detail: $log}]' <<< "${CASES}")
 done
