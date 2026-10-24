@@ -7,7 +7,7 @@ description: >
 usage:
   version: 2.1
   orbs:
-    go-quality: juburr/go-quality-orb@0.1.0
+    go-quality: juburr/go-quality-orb@0.1.1
   jobs:
     fuzz:
       docker:

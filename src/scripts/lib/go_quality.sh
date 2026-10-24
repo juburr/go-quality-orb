@@ -299,6 +299,9 @@ gq_modules() {
         fi
         if [[ ! -f "${dir}/go.mod" ]]; then
             echo "ERROR: modules names ${entry}, which has no go.mod (in $(pwd))." >&2
+            if [[ "${dir}" == . ]]; then
+                echo "  For a repository without a go.mod at its top, set modules to all, or list the module directories." >&2
+            fi
             exit 1
         fi
         if [[ -z "${seen[${dir}]+set}" ]]; then

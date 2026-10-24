@@ -112,7 +112,7 @@ Add the orb, install the tools, check the code. Copy this into `.circleci/config
 version: 2.1
 
 orbs:
-  go-quality: juburr/go-quality-orb@0.1.0
+  go-quality: juburr/go-quality-orb@0.1.1
 
 jobs:
   quality:
@@ -174,7 +174,7 @@ Each check fails the job on what it finds and stores its reports under `go-quali
     modules: all
 ```
 
-`modules: all` runs the check in every directory below `working_dir` that holds a `go.mod`, skipping `vendor` and `testdata` directories and those whose names start with `.` or `_`, as `go ./...` patterns do. `modules` also takes a list, such as `services/api, services/worker`. Reports name each module by its module path, and paths in them are relative to `working_dir`. In a `go.work` workspace, `vet`, `lint`, `test` and the rest see the workspace's other modules as usual; `mod_tidy` checks each module on its own, as `go mod tidy` does.
+`modules: all` runs the check in every directory below `working_dir` that holds a `go.mod`, skipping `vendor` and `testdata` directories and those whose names start with `.` or `_`, as `go ./...` patterns do. `modules` also takes a list, such as `services/api, services/worker`. Reports name each module by its module path, and paths in them are relative to `working_dir`. A repository with no `go.mod` at its top needs `modules: all` or a list, since `go` itself refuses `./...` there (and the default, `.`, fails the step); `fmt` needs neither, and checks every Go file below `working_dir`. In a `go.work` workspace, `vet`, `lint`, `test` and the rest see the workspace's other modules as usual. `mod_tidy` checks each module on its own, as `go mod tidy` does: it ignores `go.work`, so a module that finds another only through the workspace fails it, as it fails `go mod tidy`. Give that module a `replace` directive for the other, or leave it out of `mod_tidy`'s `modules`.
 
 ### Split Tests Across Nodes
 

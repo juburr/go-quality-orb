@@ -422,6 +422,10 @@ reset_repo
 run mod_tidy "working_dir=${REPO}" "modules=clean nothere"
 check "a directory without go.mod fails" failed
 check "naming it" said "modules names nothere, which has no go.mod"
+check "with no hint about the top of the repository" not_said "set modules to all"
+run mod_tidy "working_dir=${REPO}"
+check "the default, ., without a go.mod fails" said "modules names ., which has no go.mod"
+check "saying to set modules to all or list the modules" said "set modules to all, or list the module directories"
 run mod_tidy "working_dir=${REPO}" "modules=../repo/clean"
 check "a module outside working_dir fails" said "without '..'"
 run mod_tidy "working_dir=${WORK}/calls" modules=all
@@ -440,7 +444,23 @@ run mod_tidy "working_dir=${CLEAN}" report_only=true
 check "fails" failed
 check "saying it could not complete" said "go mod tidy -diff could not complete in example.com/clean"
 check "with go's error" said "example.com/not/available"
+check "and no workspace hint outside a workspace" not_said "ignores the workspace"
 reset_repo
+
+begin "mod_tidy: go mod tidy ignores go.work"
+# a finds b only through the workspace, with no replace directive.
+mkdir -p "${WORK}/workspace/a" "${WORK}/workspace/b"
+printf 'go 1.24\n\nuse (\n\t./a\n\t./b\n)\n' > "${WORK}/workspace/go.work"
+printf 'module example.com/a\n\ngo 1.24\n\nrequire example.com/b v0.0.0\n' > "${WORK}/workspace/a/go.mod"
+printf 'package a\n\nimport "example.com/b"\n\nvar V = b.V\n' > "${WORK}/workspace/a/a.go"
+printf 'module example.com/b\n\ngo 1.24\n' > "${WORK}/workspace/b/go.mod"
+printf 'package b\n\nvar V = 1\n' > "${WORK}/workspace/b/b.go"
+run vet "working_dir=${WORK}/workspace" modules=all
+check "vet sees the workspace's other modules" succeeded
+run mod_tidy "working_dir=${WORK}/workspace" modules=all
+check "but a module that needs the workspace can't be tidied" said "go mod tidy -diff could not complete in example.com/a (a)"
+check "and the step says why" said "go mod tidy ignores the workspace in ${WORK}/workspace/go.work"
+check "and what to do" said "needs a replace directive in its go.mod"
 run mod_tidy "working_dir=${CLEAN}" "extra_args=-compat=1.24 -diff"
 check "extra_args can't hold -diff" said "extra_args can't hold -diff"
 
