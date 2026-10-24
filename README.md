@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logos/go-quality-orb-512px.png" width="256" alt="Go Quality Orb logo: the Go gopher as a wizard in a starry hat and robe, holding a magnifying glass over a checklist scroll at a desk with a laptop, in a candlelit library whose book spines read code quality, static analysis, test coverage and best practices, above the words go-quality-orb, in a round badge">
+<img src="assets/logos/go-quality-orb-512px.png" width="256" alt="Go Quality Orb logo: the Go gopher as a wizard in a starry hat and robe, holding a magnifying glass over a checklist scroll at a desk with a laptop, in a candlelit library whose book spines read code quality, static analysis, testing strategy and best practices, above the words go-quality-orb, in a round badge with a cyan rim">
 
 # Go Quality Orb for CircleCI
 
