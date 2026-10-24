@@ -39,6 +39,27 @@ gq_modules "${PARAM_MODULES}"
 gq_packages "${PARAM_PACKAGES}"
 gq_words extra_args "$(gq_subst "${PARAM_EXTRA_ARGS}")"
 EXTRA=(${GQ_WORDS[@]+"${GQ_WORDS[@]}"})
+# The build flags in extra_args that decide which packages and files build,
+# for split_tests' go list, which can't take go test's own flags.
+LIST_FLAGS=()
+take_value=false
+for word in ${EXTRA[@]+"${EXTRA[@]}"}; do
+    if [[ "${take_value}" == true ]]; then
+        LIST_FLAGS+=("${word}")
+        take_value=false
+        continue
+    fi
+    case "${word}" in
+        -race | --race | -race=* | --race=* | -msan | --msan | -msan=* | --msan=* | -asan | --asan | -asan=* | --asan=* \
+            | -tags=* | --tags=* | -mod=* | --mod=* | -modfile=* | --modfile=* | -overlay=* | --overlay=*)
+            LIST_FLAGS+=("${word}")
+            ;;
+        -tags | --tags | -mod | --mod | -modfile | --modfile | -overlay | --overlay)
+            LIST_FLAGS+=("${word}")
+            take_value=true
+            ;;
+    esac
+done
 
 gq_uint count "${COUNT}" 1
 gq_uint rerun_fails "${RERUN_FAILS}"
@@ -157,8 +178,8 @@ for module in "${GQ_MODULES[@]}"; do
     fi
     packages=("${GQ_PACKAGES[@]}")
     if [[ "${SPLIT}" == true && "${NODES}" -gt 1 ]]; then
-        # The same build settings as the tests, since -race and tags decide
-        # which packages have files to build.
+        # The same build settings as the tests, in the same order, since
+        # -race and tags decide which packages have files to build.
         list_args=(list)
         if [[ "${RACE}" == true ]]; then
             list_args+=(-race)
@@ -166,6 +187,7 @@ for module in "${GQ_MODULES[@]}"; do
         if [[ -n "${TAGS}" ]]; then
             list_args+=("-tags=${TAGS}")
         fi
+        list_args+=(${LIST_FLAGS[@]+"${LIST_FLAGS[@]}"})
         if ! (cd "${module}" && go "${list_args[@]}" "${GQ_PACKAGES[@]}") > "${WORK}/packages" 2> "${WORK}/list.err"; then
             echo "ERROR: go list could not list the packages of $(gq_label "${module}"):" >&2
             gq_tail "${WORK}/list.err"

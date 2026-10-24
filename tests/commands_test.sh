@@ -691,9 +691,15 @@ check "a splitter that fails fails the step" failed
 check "saying so" said "circleci tests split could not split the packages of example.com/clean"
 check "rather than run nothing" not_called_with gotestsum --format
 mkdir -p "${CLEAN}/raceonly"
-printf '//go:build race\n\npackage raceonly\n' > "${CLEAN}/raceonly/raceonly.go"
+printf '//go:build race || splitonly\n\npackage raceonly\n' > "${CLEAN}/raceonly/raceonly.go"
 run test "working_dir=${CLEAN}" split_tests=true race=true -- CIRCLE_NODE_TOTAL=2 CIRCLE_NODE_INDEX=1
 check "with race, splits the packages that build with -race" said "Node 2 of 2 runs 2 of the 4 packages in example.com/clean."
+# go list refuses go test's own flags, such as -failfast.
+run test "working_dir=${CLEAN}" split_tests=true "extra_args=-race -failfast" -- CIRCLE_NODE_TOTAL=2 CIRCLE_NODE_INDEX=1
+check "and with -race in extra_args, which go list gets alone" said "Node 2 of 2 runs 2 of the 4 packages in example.com/clean."
+check "while the tests get all of extra_args" called_with gotestsum -race -failfast
+run test "working_dir=${CLEAN}" split_tests=true "extra_args=-tags splitonly -count=1" -- CIRCLE_NODE_TOTAL=2 CIRCLE_NODE_INDEX=1
+check "and with tags in extra_args, as two words" said "Node 2 of 2 runs 2 of the 4 packages in example.com/clean."
 reset_repo
 
 begin "test: parameters"
