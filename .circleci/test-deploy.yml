@@ -106,7 +106,9 @@ jobs:
               PARAM_CACHING=false PARAM_DOWNLOAD_BASE_URL="" bash "${REPO_DIR}/src/install/gotestsum/install.sh" 2>&1 | tee install.log
             grep -q "has no checksum for gotestsum ${UNLISTED_GOTESTSUM}" install.log
             grep -q "UNVERIFIED" install.log
-            [[ "$(bin/gotestsum --version)" == "gotestsum version v${UNLISTED_GOTESTSUM}"* ]]
+            # gotestsum 1.11.0 prints its version without the v that later releases print.
+            version=$(bin/gotestsum --version)
+            [[ "${version/version v/version }" == "gotestsum version ${UNLISTED_GOTESTSUM}"* ]]
       - run:
           name: A Mirror Serving A Tampered Release Is Rejected
           command: |

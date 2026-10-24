@@ -65,6 +65,10 @@ workflows:
           filters: *filters
       - orb-tools/review:
           orb_name: go-quality
+          # RC008 takes any key named run for a run step, such as the run parameters of test and
+          # generate_check (go test -run, go generate -run). tests/wiring_test.sh checks that every
+          # run step has a name instead.
+          exclude: RC008
           filters: *filters
       - shellcheck/check:
           filters: *filters
