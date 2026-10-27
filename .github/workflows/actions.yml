@@ -1,0 +1,420 @@
+# Tests the GitHub Actions in actions/ on GitHub's own runners, as
+# .circleci/test-deploy.yml tests the orb's commands on CircleCI. Each job
+# runs the actions from this checkout (uses: ./actions/...), so a pull
+# request tests its own changes.
+name: GitHub Actions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the actions tests
+        run: bash tests/actions_test.sh
+
+  # Every tool on both architectures, each the binary its checksum table
+  # pins, then one again from the cache, and an unlisted version.
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # e_machine field of the ELF header: 3e00 is x86-64, b700 is aarch64.
+          # Quoted, since YAML reads an unquoted 3e00 as the number 3.
+          - runner: ubuntu-24.04
+            arch: amd64
+            elf: "3e00"
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            elf: "b700"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+        with:
+          tools: go golangci-lint gotestsum gofumpt benchstat
+      - name: Verify the install
+        env:
+          ARCH: ${{ matrix.arch }}
+          ELF: ${{ matrix.elf }}
+        run: |
+          default() { yq ".parameters.${1//-/_}_version.default" src/commands/install.yml; }
+          [[ "$(command -v go)" == "${HOME}/sdk/go/bin/go" ]]
+          [[ "$(go env GOVERSION)" == "go$(default go)" ]]
+          [[ "$(go env GOARCH)" == "${ARCH}" ]]
+          golangci-lint version | grep -qF "has version $(default golangci-lint) "
+          [[ "$(gotestsum --version)" == "gotestsum version v$(default gotestsum)"* ]]
+          [[ "$(gofumpt --version)" == "v$(default gofumpt) "* ]]
+          benchstat -h 2>&1 | grep -q '^Usage: benchstat'
+          for tool in golangci-lint gotestsum gofumpt benchstat; do
+            binary=$(command -v "${tool}")
+            [[ "${binary}" == "${HOME}/bin/${tool}" ]]
+            od -An -tx1 -j18 -N2 "${binary}" | tr -d ' \n' | grep -Fx "${ELF}"
+            entry=$(grep -F "[\"$(default "${tool}")/${ARCH}\"]=" "src/install/${tool}/install.sh" | tail -n 1 | cut -d'"' -f4)
+            [[ "$(sha512sum "${binary}" | awk '{ print $1 }')" == "${entry}" ]] || { echo "${tool} is not the pinned binary."; exit 1; }
+          done
+      # The first install saved each tool to the cache, so this one restores
+      # it. It goes to a directory of its own, which later steps find first
+      # on the PATH.
+      - uses: ./actions/install_gotestsum
+        with:
+          install_path: ${{ runner.temp }}/second
+      - name: Verify the second install comes first on the PATH
+        env:
+          SECOND: ${{ runner.temp }}/second
+        run: |
+          [[ "$(command -v gotestsum)" == "${SECOND}/gotestsum" ]]
+          gotestsum --version
+      - name: Install an unlisted version, which must fail
+        id: unlisted
+        continue-on-error: true
+        uses: ./actions/install_golangci_lint
+        with:
+          version: 2.9.0
+          caching: false
+          install_path: ${{ runner.temp }}/unlisted
+      - name: Verify it failed before installing anything
+        env:
+          OUTCOME: ${{ steps.unlisted.outcome }}
+          UNLISTED: ${{ runner.temp }}/unlisted
+        run: |
+          [[ "${OUTCOME}" == failure ]]
+          [[ ! -e "${UNLISTED}/golangci-lint" ]]
+
+  # A fresh runner with every download host blocked installs from the cache
+  # the install job saved, which only works if the cache is used, for
+  # benchstat, which is built, as well as the tools it downloads.
+  install-from-cache:
+    needs: install
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Block the download hosts
+        run: |
+          hosts="github.com objects.githubusercontent.com release-assets.githubusercontent.com dl.google.com go.dev proxy.golang.org"
+          echo "127.0.0.1 ${hosts}" | sudo tee -a /etc/hosts
+          for host in github.com dl.google.com proxy.golang.org; do
+            if curl -sSf --max-time 10 -o /dev/null "https://${host}"; then
+              echo "${host} is still reachable."
+              exit 1
+            fi
+          done
+      - uses: ./actions/install
+        with:
+          tools: go golangci-lint gotestsum gofumpt benchstat
+      - name: Verify the install
+        run: |
+          go version
+          golangci-lint version
+          gotestsum --version
+          gofumpt --version
+          benchstat -h 2>&1 | grep -q '^Usage: benchstat'
+
+  # test-deploy.yml's checks-test: every check passes on the clean fixture,
+  # with the real tools, and writes its reports, on both architectures.
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+        with:
+          tools: go golangci-lint gotestsum gofumpt
+      - uses: ./actions/fmt
+        with:
+          working_dir: tests/fixtures/clean
+          simplify: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/fmt
+        with:
+          working_dir: tests/fixtures/clean
+          formatter: gofumpt
+          report_name: gofumpt
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/mod_tidy
+        with:
+          working_dir: tests/fixtures/clean
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/vet
+        with:
+          working_dir: tests/fixtures/clean
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/lint
+        with:
+          working_dir: tests/fixtures/clean
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/generate_check
+        with:
+          working_dir: tests/fixtures/clean
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/test
+        with:
+          working_dir: tests/fixtures/clean
+          race: "true"
+          shuffle: "on"
+          coverage_min: "30"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/fuzz
+        with:
+          working_dir: tests/fixtures/clean
+          fuzz_time: 10s
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/build
+        with:
+          working_dir: tests/fixtures/clean
+          platforms: linux/amd64 linux/arm64 darwin/arm64 windows/amd64
+          output_dir: ${{ runner.temp }}/reports
+      - name: Verify the reports
+        env:
+          REPORTS: ${{ runner.temp }}/reports
+        run: |
+          [[ -z "$(git status --porcelain)" ]] || { git status; echo "A check changed the checkout."; exit 1; }
+          cd "${REPORTS}"
+          [[ ! -s gofmt.txt && ! -s gofumpt.txt && ! -s go-mod-tidy.diff && ! -s go-generate.txt ]]
+          jq -e 'length == 0' go-vet.json golangci-lint.json
+          jq -e '.version == "2.1.0" and (.runs | length) == 1' golangci-lint.sarif
+          for name in gofmt gofumpt go-mod-tidy go-vet golangci-lint go-generate go-fuzz go-build; do
+            grep -q '<testsuite ' "junit/${name}.xml"
+          done
+          grep -q '<testcase ' junit/go-test/junit.xml
+          grep -q '"Action":"pass"' go-test/events.json
+          grep -q '^total:' go-test/coverage.txt
+          [[ -s go-test/coverage.html ]]
+          awk '{ exit !($1 >= 30) }' go-test/coverage-total.txt
+          grep -q 'name="FuzzParse"' junit/go-fuzz.xml
+          [[ "$(grep -c '<testcase classname="."' junit/go-build.xml)" -eq 4 ]]
+
+  # test-deploy.yml's findings-test: with report_only, every check passes
+  # and writes what it found in the dirty fixture; by default, each fails.
+  findings:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+        with:
+          tools: go golangci-lint gotestsum gofumpt
+      - uses: ./actions/fmt
+        with:
+          working_dir: tests/fixtures/dirty
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/mod_tidy
+        with:
+          working_dir: tests/fixtures/dirty
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/vet
+        with:
+          working_dir: tests/fixtures/dirty
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/lint
+        with:
+          working_dir: tests/fixtures/dirty
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/fuzz
+        with:
+          working_dir: tests/fixtures/dirty
+          fuzz_time: 60s
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/build
+        with:
+          working_dir: tests/fixtures/dirty
+          platforms: linux/amd64 windows/amd64
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - uses: ./actions/generate_check
+        with:
+          working_dir: tests/fixtures/dirty
+          report_only: "true"
+          output_dir: ${{ runner.temp }}/reports
+      - name: Verify report_only reported the findings
+        env:
+          REPORTS: ${{ runner.temp }}/reports
+        run: |
+          cd "${REPORTS}"
+          grep -qx parse/parse.go gofmt.txt
+          grep -q '^-golang.org/x/sync v0.10.0' go-mod-tidy.diff
+          jq -e 'any(.[]; .analyzer == "assign" and .position == "parse/parse.go:24:2")' go-vet.json
+          jq -e '[.[].FromLinter] | sort == ["errcheck", "govet"]' golangci-lint.json
+          jq -e '[.[].Pos.Filename] | unique == ["parse/parse.go"]' golangci-lint.json
+          jq -e '[.runs[].results[]] | length == 2' golangci-lint.sarif
+          grep -q 'FuzzParse' junit/go-fuzz.xml && grep -q '<failure' junit/go-fuzz.xml
+          ls go-fuzz/parse/testdata/fuzz/FuzzParse/
+          grep -q 'windows/amd64"><failure' junit/go-build.xml
+          grep -qx tests/fixtures/dirty/parse/version_gen.go go-generate.txt
+          cd "${GITHUB_WORKSPACE}"
+          git checkout -- tests/fixtures/dirty
+          git clean -fdq tests/fixtures/dirty
+      - name: fmt, which must fail
+        id: fmt
+        continue-on-error: true
+        uses: ./actions/fmt
+        with:
+          working_dir: tests/fixtures/dirty
+          report_name: fmt-default
+          output_dir: ${{ runner.temp }}/default
+      - name: mod_tidy, which must fail
+        id: mod-tidy
+        continue-on-error: true
+        uses: ./actions/mod_tidy
+        with:
+          working_dir: tests/fixtures/dirty
+          report_name: mod-tidy-default
+          output_dir: ${{ runner.temp }}/default
+      - name: vet, which must fail
+        id: vet
+        continue-on-error: true
+        uses: ./actions/vet
+        with:
+          working_dir: tests/fixtures/dirty
+          report_name: vet-default
+          output_dir: ${{ runner.temp }}/default
+      - name: lint, which must fail
+        id: lint
+        continue-on-error: true
+        uses: ./actions/lint
+        with:
+          working_dir: tests/fixtures/dirty
+          report_name: lint-default
+          output_dir: ${{ runner.temp }}/default
+      - name: build, which must fail
+        id: build
+        continue-on-error: true
+        uses: ./actions/build
+        with:
+          working_dir: tests/fixtures/dirty
+          platforms: windows/amd64
+          report_name: build-default
+          output_dir: ${{ runner.temp }}/default
+      - name: test, which must fail
+        id: test
+        continue-on-error: true
+        uses: ./actions/test
+        with:
+          working_dir: tests/fixtures/dirty
+          tags: failing
+          report_name: test-default
+          output_dir: ${{ runner.temp }}/default
+      - name: generate_check, which must fail
+        id: generate-check
+        continue-on-error: true
+        uses: ./actions/generate_check
+        with:
+          working_dir: tests/fixtures/dirty
+          report_name: generate-check-default
+          output_dir: ${{ runner.temp }}/default
+      - name: Verify each failed
+        env:
+          OUTCOMES: >-
+            ${{ steps.fmt.outcome }} ${{ steps.mod-tidy.outcome }} ${{ steps.vet.outcome }} ${{ steps.lint.outcome }}
+            ${{ steps.build.outcome }} ${{ steps.test.outcome }} ${{ steps.generate-check.outcome }}
+        run: |
+          [[ "${OUTCOMES}" == "failure failure failure failure failure failure failure" ]]
+          git checkout -- tests/fixtures/dirty
+          git clean -fdq tests/fixtures/dirty
+      # A tool that can't complete fails even with report_only.
+      - name: Break the clean fixture's build
+        run: printf 'package greet\n\nfunc broken() int { return "x" }\n' > tests/fixtures/clean/greet/broken.go
+      - name: vet on code that doesn't compile, which must fail
+        id: vet-broken
+        continue-on-error: true
+        uses: ./actions/vet
+        with:
+          working_dir: tests/fixtures/clean
+          report_only: "true"
+          report_name: vet-broken
+          output_dir: ${{ runner.temp }}/broken
+      - name: Verify it failed with report_only
+        env:
+          OUTCOME: ${{ steps.vet-broken.outcome }}
+        run: |
+          [[ "${OUTCOME}" == failure ]]
+          rm tests/fixtures/clean/greet/broken.go
+
+  # test-deploy.yml's bench-test: benchmarks on their own, compared with the
+  # same commit, and compared with a commit before a slowdown, which
+  # max_regression fails.
+  bench:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+        with:
+          tools: go benchstat
+      - uses: ./actions/bench
+        with:
+          working_dir: tests/fixtures/clean
+          output_dir: ${{ runner.temp }}/bench
+      - uses: ./actions/bench
+        with:
+          working_dir: tests/fixtures/clean
+          base_ref: HEAD
+          report_name: go-bench-same
+          output_dir: ${{ runner.temp }}/bench
+      - name: Commit a slowdown
+        env:
+          REPORTS: ${{ runner.temp }}/bench
+        run: |
+          grep -q 'BenchmarkHello' "${REPORTS}/go-bench.txt"
+          grep -q 'base' "${REPORTS}/go-bench-same.benchstat.txt"
+          python3 - << 'EOF'
+          path = "tests/fixtures/clean/greet/greet.go"
+          source = open(path).read()
+          slow = 'out := ""\n\tfor i := 0; i < 50; i++ {\n\t\tout = strings.Repeat("Hello, "+name, 2)[:7+len(name)]\n\t}\n\treturn out'
+          open(path, "w").write(source.replace('return "Hello, " + name', slow))
+          EOF
+          git -c user.name=ci -c user.email=ci@example.com commit -q -am "slow down Hello"
+      - name: Compare with the commit before, which must fail
+        id: slow
+        continue-on-error: true
+        uses: ./actions/bench
+        with:
+          working_dir: tests/fixtures/clean
+          base_ref: HEAD~1
+          max_regression: "10"
+          report_name: go-bench-slow
+          output_dir: ${{ runner.temp }}/bench
+      - name: Verify max_regression failed the step
+        env:
+          OUTCOME: ${{ steps.slow.outcome }}
+          REPORTS: ${{ runner.temp }}/bench
+        run: |
+          [[ "${OUTCOME}" == failure ]]
+          grep -q 'Hello-[0-9]* sec/op +' "${REPORTS}/go-bench-slow.regressions.txt"
+          [[ "$(git worktree list | wc -l)" -eq 1 ]]

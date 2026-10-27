@@ -1,0 +1,304 @@
+name: Install go-quality-orb tools
+description: >
+  Installs the Go quality tools named in tools, each verified against this
+  orb's checksum table, through the install command for that tool
+  (install_golangci_lint, install_gotestsum, ...), which can also be used on
+  its own. golangci-lint, gotestsum and gofumpt are release binaries, and Go a
+  release archive, downloaded for amd64 or arm64, picked from the machine's
+  CPU architecture. benchstat publishes no binaries, so it is built with a
+  pinned Go release and checked against the table. Run this before the orb's
+  other commands. The GitHub Actions twin of the orb's install command.
+author: juburr
+
+inputs:
+  benchstat_version:
+    description: >
+      The benchstat version (a golang.org/x/perf pseudo-version), when tools
+      names it.
+    default: 0.0.0-20261009192801-be2c69fb417e
+  caching:
+    description: >
+      Cache each tool's verified download (or, for benchstat, its verified
+      build) between jobs. Only verified files are cached, and a cached file
+      is verified again before it is used.
+    default: "true"
+  download_base_url:
+    description: >
+      Base URL of an internal mirror of GitHub releases, such as an
+      Artifactory or Nexus remote repository, to download golangci-lint,
+      gotestsum and gofumpt from instead of https://github.com. It replaces
+      https://github.com in each release URL, so the mirror must serve the
+      same paths. It must be an https:// URL, without credentials
+      (user:password@) or a query or fragment, which would show in the log.
+      What is downloaded is still verified against this orb's checksum table.
+    default: ""
+  go_download_base_url:
+    description: >
+      Base URL of an internal mirror of https://dl.google.com/go, to download
+      Go release archives from: Go itself, and the Go release that builds
+      benchstat when the job's go is not that release. The same rules as
+      download_base_url apply.
+    default: ""
+  go_install_path:
+    description: >
+      Absolute path of the directory to install Go into (its GOROOT), when
+      tools names go. It must be missing, hold no files, or be a Go
+      installation install_go installed before. Defaults to $HOME/sdk/go.
+    default: ""
+  go_version:
+    description: >
+      The Go version, when tools names go.
+    default: "1.27.3"
+  gofumpt_version:
+    description: >
+      The gofumpt version, when tools names it.
+    default: "0.12.0"
+  golangci_lint_version:
+    description: >
+      The golangci-lint version, when tools names it.
+    default: "2.15.0"
+  gotestsum_version:
+    description: >
+      The gotestsum version, when tools names it.
+    default: "1.13.0"
+  install_path:
+    description: >
+      Absolute path of the directory to install golangci-lint, gotestsum,
+      gofumpt and benchstat into. It is created if needed and added to the
+      PATH of later steps when it isn't already on it, and must be writable
+      without root. Defaults to $HOME/bin.
+    default: ""
+  tools:
+    description: >
+      The tools to install, separated by commas or spaces: any of go,
+      golangci-lint, gotestsum, gofumpt and benchstat. An unknown name fails
+      the step. go installs first, so the rest find it on the PATH.
+    default: golangci-lint,gotestsum
+  verify_checksums:
+    description: >
+      SHA-512 verification against this orb's checksum table, for every tool.
+      "strict" (default) fails before downloading anything when a version has
+      no checksum in the table. "known_versions" verifies listed versions and
+      installs unlisted versions unverified, with a warning. "false" skips
+      verification and is not recommended.
+    default: strict
+
+runs:
+  using: composite
+  steps:
+    - name: Check the tools to install
+      id: tools
+      shell: bash
+      env:
+        PARAM_TOOLS: ${{ inputs.tools }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/install_tools.sh"
+        # The names, space-separated with a space on either side, for the
+        # if: conditions below.
+        read -r -a tools <<< "${PARAM_TOOLS//,/ }"
+        printf 'list= %s \n' "${tools[*]}" >> "${GITHUB_OUTPUT}"
+    # The key is computed from a file that names the CPU (uname -m), HOME (a
+    # cache is restored to the absolute path it was saved from) and the
+    # version, as the orb's command computes it.
+    - name: Prepare Go cache key
+      id: go-cache-key
+      if: contains(steps.tools.outputs.list, ' go ') && (inputs.caching == 'true' || inputs.caching == '1')
+      shell: bash
+      env:
+        ORB_CACHE_KEY_FILE: ${{ runner.temp }}/go-quality-orb-go-cache-key
+        PARAM_VERSION: ${{ inputs.go_version }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../src/scripts/cache_key.sh"
+        # Bump the version in the key when an existing checksum table entry
+        # changes, so caches saved for the old bytes stop being restored.
+        printf 'key=go-quality-orb-go-v1-%s\n' "$(sha256sum < "${ORB_CACHE_KEY_FILE}" | cut -c1-64)" >> "${GITHUB_OUTPUT}"
+    - name: Restore Go cache
+      id: go-restore
+      if: contains(steps.tools.outputs.list, ' go ') && (inputs.caching == 'true' || inputs.caching == '1')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-go
+        key: ${{ steps.go-cache-key.outputs.key }}
+    - name: Install Go
+      if: contains(steps.tools.outputs.list, ' go ')
+      shell: bash
+      env:
+        PARAM_CACHING: ${{ inputs.caching }}
+        PARAM_DOWNLOAD_BASE_URL: ${{ inputs.go_download_base_url }}
+        PARAM_INSTALL_PATH: ${{ inputs.go_install_path }}
+        PARAM_VERIFY_CHECKSUMS: ${{ inputs.verify_checksums }}
+        PARAM_VERSION: ${{ inputs.go_version }}
+      run: bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/install/go/install.sh"
+    # A saved cache can't be replaced, so it is only saved when none was
+    # restored. Like the orb's save_cache, it is saved right after the
+    # install, not at the end of the job.
+    - name: Save Go cache
+      if: contains(steps.tools.outputs.list, ' go ') && (inputs.caching == 'true' || inputs.caching == '1') && steps.go-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-go
+        key: ${{ steps.go-cache-key.outputs.key }}
+    # The key is computed from a file that names the CPU (uname -m), HOME (a
+    # cache is restored to the absolute path it was saved from) and the
+    # version, as the orb's command computes it.
+    - name: Prepare golangci-lint cache key
+      id: golangci-lint-cache-key
+      if: contains(steps.tools.outputs.list, ' golangci-lint ') && (inputs.caching == 'true' || inputs.caching == '1')
+      shell: bash
+      env:
+        ORB_CACHE_KEY_FILE: ${{ runner.temp }}/go-quality-orb-golangci-lint-cache-key
+        PARAM_VERSION: ${{ inputs.golangci_lint_version }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../src/scripts/cache_key.sh"
+        # Bump the version in the key when an existing checksum table entry
+        # changes, so caches saved for the old bytes stop being restored.
+        printf 'key=go-quality-orb-golangci-lint-v1-%s\n' "$(sha256sum < "${ORB_CACHE_KEY_FILE}" | cut -c1-64)" >> "${GITHUB_OUTPUT}"
+    - name: Restore golangci-lint cache
+      id: golangci-lint-restore
+      if: contains(steps.tools.outputs.list, ' golangci-lint ') && (inputs.caching == 'true' || inputs.caching == '1')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-golangci-lint
+        key: ${{ steps.golangci-lint-cache-key.outputs.key }}
+    - name: Install golangci-lint
+      if: contains(steps.tools.outputs.list, ' golangci-lint ')
+      shell: bash
+      env:
+        PARAM_CACHING: ${{ inputs.caching }}
+        PARAM_DOWNLOAD_BASE_URL: ${{ inputs.download_base_url }}
+        PARAM_INSTALL_PATH: ${{ inputs.install_path }}
+        PARAM_VERIFY_CHECKSUMS: ${{ inputs.verify_checksums }}
+        PARAM_VERSION: ${{ inputs.golangci_lint_version }}
+      run: bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/install/golangci-lint/install.sh"
+    # A saved cache can't be replaced, so it is only saved when none was
+    # restored. Like the orb's save_cache, it is saved right after the
+    # install, not at the end of the job.
+    - name: Save golangci-lint cache
+      if: contains(steps.tools.outputs.list, ' golangci-lint ') && (inputs.caching == 'true' || inputs.caching == '1') && steps.golangci-lint-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-golangci-lint
+        key: ${{ steps.golangci-lint-cache-key.outputs.key }}
+    # The key is computed from a file that names the CPU (uname -m), HOME (a
+    # cache is restored to the absolute path it was saved from) and the
+    # version, as the orb's command computes it.
+    - name: Prepare gotestsum cache key
+      id: gotestsum-cache-key
+      if: contains(steps.tools.outputs.list, ' gotestsum ') && (inputs.caching == 'true' || inputs.caching == '1')
+      shell: bash
+      env:
+        ORB_CACHE_KEY_FILE: ${{ runner.temp }}/go-quality-orb-gotestsum-cache-key
+        PARAM_VERSION: ${{ inputs.gotestsum_version }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../src/scripts/cache_key.sh"
+        # Bump the version in the key when an existing checksum table entry
+        # changes, so caches saved for the old bytes stop being restored.
+        printf 'key=go-quality-orb-gotestsum-v1-%s\n' "$(sha256sum < "${ORB_CACHE_KEY_FILE}" | cut -c1-64)" >> "${GITHUB_OUTPUT}"
+    - name: Restore gotestsum cache
+      id: gotestsum-restore
+      if: contains(steps.tools.outputs.list, ' gotestsum ') && (inputs.caching == 'true' || inputs.caching == '1')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-gotestsum
+        key: ${{ steps.gotestsum-cache-key.outputs.key }}
+    - name: Install gotestsum
+      if: contains(steps.tools.outputs.list, ' gotestsum ')
+      shell: bash
+      env:
+        PARAM_CACHING: ${{ inputs.caching }}
+        PARAM_DOWNLOAD_BASE_URL: ${{ inputs.download_base_url }}
+        PARAM_INSTALL_PATH: ${{ inputs.install_path }}
+        PARAM_VERIFY_CHECKSUMS: ${{ inputs.verify_checksums }}
+        PARAM_VERSION: ${{ inputs.gotestsum_version }}
+      run: bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/install/gotestsum/install.sh"
+    # A saved cache can't be replaced, so it is only saved when none was
+    # restored. Like the orb's save_cache, it is saved right after the
+    # install, not at the end of the job.
+    - name: Save gotestsum cache
+      if: contains(steps.tools.outputs.list, ' gotestsum ') && (inputs.caching == 'true' || inputs.caching == '1') && steps.gotestsum-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-gotestsum
+        key: ${{ steps.gotestsum-cache-key.outputs.key }}
+    # The key is computed from a file that names the CPU (uname -m), HOME (a
+    # cache is restored to the absolute path it was saved from) and the
+    # version, as the orb's command computes it.
+    - name: Prepare gofumpt cache key
+      id: gofumpt-cache-key
+      if: contains(steps.tools.outputs.list, ' gofumpt ') && (inputs.caching == 'true' || inputs.caching == '1')
+      shell: bash
+      env:
+        ORB_CACHE_KEY_FILE: ${{ runner.temp }}/go-quality-orb-gofumpt-cache-key
+        PARAM_VERSION: ${{ inputs.gofumpt_version }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../src/scripts/cache_key.sh"
+        # Bump the version in the key when an existing checksum table entry
+        # changes, so caches saved for the old bytes stop being restored.
+        printf 'key=go-quality-orb-gofumpt-v1-%s\n' "$(sha256sum < "${ORB_CACHE_KEY_FILE}" | cut -c1-64)" >> "${GITHUB_OUTPUT}"
+    - name: Restore gofumpt cache
+      id: gofumpt-restore
+      if: contains(steps.tools.outputs.list, ' gofumpt ') && (inputs.caching == 'true' || inputs.caching == '1')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-gofumpt
+        key: ${{ steps.gofumpt-cache-key.outputs.key }}
+    - name: Install gofumpt
+      if: contains(steps.tools.outputs.list, ' gofumpt ')
+      shell: bash
+      env:
+        PARAM_CACHING: ${{ inputs.caching }}
+        PARAM_DOWNLOAD_BASE_URL: ${{ inputs.download_base_url }}
+        PARAM_INSTALL_PATH: ${{ inputs.install_path }}
+        PARAM_VERIFY_CHECKSUMS: ${{ inputs.verify_checksums }}
+        PARAM_VERSION: ${{ inputs.gofumpt_version }}
+      run: bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/install/gofumpt/install.sh"
+    # A saved cache can't be replaced, so it is only saved when none was
+    # restored. Like the orb's save_cache, it is saved right after the
+    # install, not at the end of the job.
+    - name: Save gofumpt cache
+      if: contains(steps.tools.outputs.list, ' gofumpt ') && (inputs.caching == 'true' || inputs.caching == '1') && steps.gofumpt-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-gofumpt
+        key: ${{ steps.gofumpt-cache-key.outputs.key }}
+    # The key is computed from a file that names the CPU (uname -m), HOME (a
+    # cache is restored to the absolute path it was saved from) and the
+    # version, as the orb's command computes it.
+    - name: Prepare benchstat cache key
+      id: benchstat-cache-key
+      if: contains(steps.tools.outputs.list, ' benchstat ') && (inputs.caching == 'true' || inputs.caching == '1')
+      shell: bash
+      env:
+        ORB_CACHE_KEY_FILE: ${{ runner.temp }}/go-quality-orb-benchstat-cache-key
+        PARAM_VERSION: ${{ inputs.benchstat_version }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../src/scripts/cache_key.sh"
+        # Bump the version in the key when an existing checksum table entry
+        # changes, so caches saved for the old bytes stop being restored.
+        printf 'key=go-quality-orb-benchstat-v1-%s\n' "$(sha256sum < "${ORB_CACHE_KEY_FILE}" | cut -c1-64)" >> "${GITHUB_OUTPUT}"
+    - name: Restore benchstat cache
+      id: benchstat-restore
+      if: contains(steps.tools.outputs.list, ' benchstat ') && (inputs.caching == 'true' || inputs.caching == '1')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-benchstat
+        key: ${{ steps.benchstat-cache-key.outputs.key }}
+    - name: Install benchstat
+      if: contains(steps.tools.outputs.list, ' benchstat ')
+      shell: bash
+      env:
+        PARAM_CACHING: ${{ inputs.caching }}
+        PARAM_DOWNLOAD_BASE_URL: ${{ inputs.go_download_base_url }}
+        PARAM_INSTALL_PATH: ${{ inputs.install_path }}
+        PARAM_VERIFY_CHECKSUMS: ${{ inputs.verify_checksums }}
+        PARAM_VERSION: ${{ inputs.benchstat_version }}
+      run: bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/install/benchstat/install.sh"
+    # A saved cache can't be replaced, so it is only saved when none was
+    # restored. Like the orb's save_cache, it is saved right after the
+    # install, not at the end of the job.
+    - name: Save benchstat cache
+      if: contains(steps.tools.outputs.list, ' benchstat ') && (inputs.caching == 'true' || inputs.caching == '1') && steps.benchstat-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/go-quality-orb-benchstat
+        key: ${{ steps.benchstat-cache-key.outputs.key }}

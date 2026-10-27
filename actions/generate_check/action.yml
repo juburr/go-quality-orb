@@ -1,0 +1,113 @@
+name: Check go generate output
+description: >
+  Checks that generated code is up to date: runs go generate in each module
+  and fails when it changed, added or deleted any file git tracks or would
+  track (ignored files don't count), listing them and writing the changes
+  (<report_name>.diff). Files that differed from git's index before the step
+  only count when go generate changes them again. working_dir must be in a git
+  checkout, and the generators go generate runs (protoc, mockgen, stringer,
+  sqlc...) must be installed first. The step fails when go generate changes
+  something, unless report_only is true; it always fails when go generate
+  fails. The GitHub Actions twin of the orb's generate_check command.
+author: juburr
+
+inputs:
+  junit:
+    description: >
+      Also write JUnit XML, one failing test case per changed file, for a
+      JUnit reader such as a test report action.
+    default: "true"
+  modules:
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+    default: .
+  output_dir:
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to the
+      artifact upload.
+    default: /tmp/go-quality-reports
+  packages:
+    description: >
+      The package patterns to run go generate for in each module, separated by
+      commas or spaces.
+    default: ./...
+  report_name:
+    description: >
+      The reports' file name, without extension: <report_name>.txt (the
+      changed files), .diff, .log and junit/<report_name>.xml. Give each run
+      of this command in a job its own.
+    default: go-generate
+  report_only:
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A go generate that fails still fails it.
+    default: "false"
+  run:
+    description: >
+      Only run the //go:generate directives matching this regular expression
+      (go generate -run).
+    default: ""
+  skip:
+    description: >
+      Skip the //go:generate directives matching this regular expression (go
+      generate -skip, Go 1.22 and later).
+    default: ""
+  store_artifacts:
+    description: >
+      Upload output_dir as a workflow artifact, named
+      go-quality-reports-<report_name> and a random suffix, including when the
+      step fails.
+    default: "true"
+  tags:
+    description: >
+      Build tags (go -tags), separated by commas.
+    default: ""
+  working_dir:
+    description: >
+      Directory to run in: modules are relative to it.
+    default: .
+
+runs:
+  using: composite
+  steps:
+    # Artifact names must be unique in a workflow run, and the same command
+    # can run in several jobs or matrix legs, so the name ends in a random
+    # suffix.
+    - name: Name the reports artifact
+      id: artifact
+      if: (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      shell: bash
+      env:
+        REPORT_NAME: ${{ inputs.report_name }}
+      run: |
+        if [[ ! "${REPORT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            REPORT_NAME=reports
+        fi
+        printf 'name=go-quality-reports-%s-%s\n' "${REPORT_NAME}" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')" >> "${GITHUB_OUTPUT}"
+    - name: go generate
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        PARAM_JUNIT: ${{ inputs.junit }}
+        PARAM_MODULES: ${{ inputs.modules }}
+        PARAM_OUTPUT_DIR: ${{ inputs.output_dir }}
+        PARAM_PACKAGES: ${{ inputs.packages }}
+        PARAM_REPORT_NAME: ${{ inputs.report_name }}
+        PARAM_REPORT_ONLY: ${{ inputs.report_only }}
+        PARAM_RUN: ${{ inputs.run }}
+        PARAM_SKIP: ${{ inputs.skip }}
+        PARAM_TAGS: ${{ inputs.tags }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/generate_check.sh"
+        "SCRIPT_GO_QUALITY_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/go_quality.sh"
+    - name: Upload the reports
+      if: always() && (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.output_dir }}
+        if-no-files-found: ignore
