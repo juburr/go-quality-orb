@@ -1,0 +1,96 @@
+name: Check go mod tidy
+description: >
+  Checks that go.mod and go.sum are tidy in each module, with go mod tidy
+  -diff, which changes nothing and prints the changes go mod tidy would make
+  (written to <report_name>.diff). It needs Go 1.23 or newer, and fails the
+  step, before checking anything, when a module runs an older Go. The step
+  fails when a module isn't tidy, unless report_only is true; it always fails
+  when go mod tidy can't complete, such as when it can't download a module.
+  Each module is checked on its own, as go mod tidy does, so a go.work
+  workspace's other modules must be reachable as go.mod requires them. The
+  GitHub Actions twin of the orb's mod_tidy command.
+author: juburr
+
+inputs:
+  extra_args:
+    description: >
+      More go mod tidy arguments, split like shell words. Nothing in them is
+      expanded or run. Such as -compat=1.26 or -e. -diff is refused, since
+      this command always passes it.
+    default: ""
+  junit:
+    description: >
+      Also write JUnit XML, one test case per module, for a JUnit reader such
+      as a test report action.
+    default: "true"
+  modules:
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+    default: .
+  output_dir:
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to the
+      artifact upload.
+    default: /tmp/go-quality-reports
+  report_name:
+    description: >
+      The reports' file name, without extension: <report_name>.diff and
+      junit/<report_name>.xml. Give each run of this command in a job its own.
+    default: go-mod-tidy
+  report_only:
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A go mod tidy that can't complete still fails it.
+    default: "false"
+  store_artifacts:
+    description: >
+      Upload output_dir as a workflow artifact, named
+      go-quality-reports-<report_name> and a random suffix, including when the
+      step fails.
+    default: "true"
+  working_dir:
+    description: >
+      Directory to run in: modules are relative to it.
+    default: .
+
+runs:
+  using: composite
+  steps:
+    # Artifact names must be unique in a workflow run, and the same command
+    # can run in several jobs or matrix legs, so the name ends in a random
+    # suffix.
+    - name: Name the reports artifact
+      id: artifact
+      if: (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      shell: bash
+      env:
+        REPORT_NAME: ${{ inputs.report_name }}
+      run: |
+        if [[ ! "${REPORT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            REPORT_NAME=reports
+        fi
+        printf 'name=go-quality-reports-%s-%s\n' "${REPORT_NAME}" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')" >> "${GITHUB_OUTPUT}"
+    - name: go mod tidy -diff
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        PARAM_EXTRA_ARGS: ${{ inputs.extra_args }}
+        PARAM_JUNIT: ${{ inputs.junit }}
+        PARAM_MODULES: ${{ inputs.modules }}
+        PARAM_OUTPUT_DIR: ${{ inputs.output_dir }}
+        PARAM_REPORT_NAME: ${{ inputs.report_name }}
+        PARAM_REPORT_ONLY: ${{ inputs.report_only }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/mod_tidy.sh"
+        "SCRIPT_GO_QUALITY_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/go_quality.sh"
+    - name: Upload the reports
+      if: always() && (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.output_dir }}
+        if-no-files-found: ignore

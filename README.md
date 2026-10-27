@@ -2,26 +2,28 @@
 
 <img src="assets/logos/go-quality-orb-512px.png" width="256" alt="Go Quality Orb logo: the Go gopher as a wizard in a starry hat and robe, holding a magnifying glass over a checklist scroll at a desk with a laptop, in a candlelit library whose book spines read code quality, static analysis, testing strategy and best practices, above the words go-quality-orb, in a round badge with a cyan rim">
 
-# Go Quality Orb for CircleCI
+# Go Quality for CircleCI and GitHub Actions
 
 ### Hold Go code to a standard on every commit: formatting, tidy modules, vet, golangci-lint, generated code, tests, fuzzing, cross-compiling and benchmarks.
 
-Install checksum-verified [Go](https://go.dev/dl/), [golangci-lint](https://golangci-lint.run), [gotestsum](https://github.com/gotestyourself/gotestsum), [gofumpt](https://github.com/mvdan/gofumpt) and [benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat), and gate builds on what the Go toolchain and they find.<br>
+Install checksum-verified [Go](https://go.dev/dl/), [golangci-lint](https://golangci-lint.run), [gotestsum](https://github.com/gotestyourself/gotestsum), [gofumpt](https://github.com/mvdan/gofumpt) and [benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat), and gate builds on what the Go toolchain and they find, as orb commands or GitHub Actions.<br>
 Every module of a monorepo · JUnit, SARIF and diffs · Findings told apart from tools that didn't run · Strict SHA-512 verification by default · No `sudo`
 
 [![CircleCI Build Status](https://circleci.com/gh/juburr/go-quality-orb.svg?style=shield "CircleCI Build Status")](https://circleci.com/gh/juburr/go-quality-orb)
+[![GitHub Actions Status](https://github.com/juburr/go-quality-orb/actions/workflows/actions.yml/badge.svg?branch=main "GitHub Actions Status")](https://github.com/juburr/go-quality-orb/actions/workflows/actions.yml)
 [![CircleCI Orb Version](https://badges.circleci.com/orbs/juburr/go-quality-orb.svg)](https://circleci.com/developer/orbs/orb/juburr/go-quality-orb)
 [![GitHub License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 [![CircleCI Community](https://img.shields.io/badge/community-CircleCI%20Discuss-343434.svg)](https://discuss.circleci.com/c/ecosystem/orbs)
 
+![CircleCI orb and GitHub Actions](https://img.shields.io/badge/CI-CircleCI%20%7C%20GitHub%20Actions-F97316?style=for-the-badge)
 ![Go 1.22 and newer](https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)
 ![amd64 and arm64](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-0EA5E9?style=for-the-badge&logo=linux&logoColor=white)
 ![SHA-512 verified by default](https://img.shields.io/badge/SHA--512-strict%20by%20default-16A34A?style=for-the-badge)
 ![No sudo required](https://img.shields.io/badge/sudo-not%20required-DB2777?style=for-the-badge)
 
-**[Quick Start](#-quick-start)** · **[Features](#-why-go-quality-orb)** · **[Recipes](#-recipes)** · **[Commands](#-commands)** · **[Reports](#-reports)** · **[Security](#-secure-by-design)** · **[Network Access](#-network-access)**
+**[Quick Start](#-quick-start)** · **[Features](#-why-go-quality-orb)** · **[Recipes](#-recipes)** · **[Commands](#-commands)** · **[GitHub Actions](#-github-actions)** · **[Reports](#-reports)** · **[Security](#-secure-by-design)** · **[Network Access](#-network-access)**
 
-<sub>An unofficial, community-maintained orb. [Contributions are welcome!](#-contributing)</sub>
+<sub>An unofficial, community-maintained CircleCI orb and set of GitHub Actions. [Contributions are welcome!](#-contributing)</sub>
 
 </div>
 
@@ -106,13 +108,15 @@ flowchart LR
 
 ## 🚀 Quick Start
 
+### CircleCI
+
 Add the orb, install the tools, check the code. Copy this into `.circleci/config.yml`:
 
 ```yaml
 version: 2.1
 
 orbs:
-  go-quality: juburr/go-quality-orb@0.1.1
+  go-quality: juburr/go-quality-orb@0.2.0
 
 jobs:
   quality:
@@ -139,6 +143,39 @@ workflows:
 ```
 
 Each check fails the job on what it finds and stores its reports under `go-quality-reports/` in the job's artifacts, with JUnit results in the Tests tab. `lint` uses the project's own `.golangci.yml`, which must be a golangci-lint 2 configuration (`golangci-lint migrate` converts an older one); without one, golangci-lint runs its standard linters.
+
+### GitHub Actions
+
+```yaml
+name: Quality
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: juburr/go-quality-orb/actions/install@v0.2.0
+        with:
+          tools: go golangci-lint gotestsum
+      - uses: juburr/go-quality-orb/actions/fmt@v0.2.0
+      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.2.0
+      - uses: juburr/go-quality-orb/actions/vet@v0.2.0
+      - uses: juburr/go-quality-orb/actions/lint@v0.2.0
+      - uses: juburr/go-quality-orb/actions/generate_check@v0.2.0
+      - uses: juburr/go-quality-orb/actions/test@v0.2.0
+        with:
+          race: "true"
+      - uses: juburr/go-quality-orb/actions/build@v0.2.0
+        with:
+          platforms: linux/amd64 linux/arm64
+```
+
+Each check fails the job on what it finds and uploads its reports from `/tmp/go-quality-reports` as a workflow artifact, even when it fails. GitHub's runners come with a Go, but `tools: go` installs the verified release the orb pins. See [GitHub Actions](#-github-actions) for how the actions map to the orb's commands.
 
 ## 🍳 Recipes
 
@@ -398,6 +435,50 @@ Checks that each module builds for every platform in `platforms`, with `go build
 
 String parameters expand environment variables, such as `${CIRCLE_SHA1}`, except `output_dir`, `report_name`, `formatter`, `covermode`, `format` and `install`'s `tools`, which CircleCI reads when it compiles the config, before the job's environment exists. In `extra_args` and the lists, that happens before the value is split, so quote a variable that may hold spaces.
 
+## ⚡ GitHub Actions
+
+Each of the orb's commands has a GitHub Action of the same name. The actions run the same scripts as the orb, so they check the same things the same way, and take the same inputs with the same defaults.
+
+| Action | Orb command |
+| --- | --- |
+| `juburr/go-quality-orb/actions/install@v0.2.0` | [`go-quality/install`](#go-qualityinstall) |
+| `juburr/go-quality-orb/actions/install_go@v0.2.0`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
+| `juburr/go-quality-orb/actions/fmt@v0.2.0` | [`go-quality/fmt`](#go-qualityfmt) |
+| `juburr/go-quality-orb/actions/mod_tidy@v0.2.0` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
+| `juburr/go-quality-orb/actions/vet@v0.2.0` | [`go-quality/vet`](#go-qualityvet) |
+| `juburr/go-quality-orb/actions/lint@v0.2.0` | [`go-quality/lint`](#go-qualitylint) |
+| `juburr/go-quality-orb/actions/generate_check@v0.2.0` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
+| `juburr/go-quality-orb/actions/test@v0.2.0` | [`go-quality/test`](#go-qualitytest) |
+| `juburr/go-quality-orb/actions/fuzz@v0.2.0` | [`go-quality/fuzz`](#go-qualityfuzz) |
+| `juburr/go-quality-orb/actions/bench@v0.2.0` | [`go-quality/bench`](#go-qualitybench) |
+| `juburr/go-quality-orb/actions/build@v0.2.0` | [`go-quality/build`](#go-qualitybuild) |
+
+To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissions: security-events: write`), point the upload at the report:
+
+```yaml
+      - uses: juburr/go-quality-orb/actions/lint@v0.2.0
+        with:
+          report_only: "true"
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: /tmp/go-quality-reports/golangci-lint.sarif
+          category: golangci-lint
+```
+
+How they differ from the orb's commands:
+
+- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.2.0`.
+- **Inputs are strings.** Write booleans and numbers quoted, such as `report_only: "true"` or `coverage_min: "80"`. The scripts check every boolean and enum themselves.
+- **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `go_version: ${{ vars.GO_RELEASE }}`.
+- **Artifacts.** A command that stores artifacts uploads `output_dir` with [`actions/upload-artifact`](https://github.com/actions/upload-artifact), even when the step fails, as an artifact named `go-quality-reports-<report_name>-` and a random suffix, since artifact names must be unique in a workflow run. There is no Tests tab: JUnit files are in `output_dir/junit/`, for any JUnit report action.
+- **`split_tests` and `no_output_timeout`** are CircleCI's and have no effect on GitHub. To spread tests over runners, give each leg of a matrix its own `packages`; for a time limit, set `timeout-minutes` on the job or step.
+- **`bench`'s `base_ref`** needs that commit in the checkout. `actions/checkout` fetches one commit by default, so set `fetch-depth: 0` (or deep enough) to compare with `main`.
+- **Caching.** `caching` stores each tool's verified download (benchstat's verified build) with [`actions/cache`](https://github.com/actions/cache), with the same key ingredients as the orb. The cache is restored before the install and saved right after it, and what it restores is verified again. It counts toward the repository's GitHub Actions cache storage.
+- **Exports.** What an install exports to later steps (`PATH` entries, `GOROOT`) is passed on through `GITHUB_PATH` and `GITHUB_ENV`.
+- **Runners.** CI installs every tool on GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners, once from the cache with the download hosts blocked, and runs every check on the clean and dirty fixtures there, as on CircleCI.
+
+The actions are composite actions in [`actions/`](actions), next to the orb's source. Each passes its inputs to the orb's script as environment variables, never pasting them into a script, and [`actions/run_script.sh`](actions/run_script.sh) gives the script what CircleCI would: a `BASH_ENV` file for the values it hands to later steps, which it then passes on through `GITHUB_PATH` and `GITHUB_ENV`.
+
 ## 📄 Reports
 
 | Parameter | Default | Description |
@@ -422,11 +503,11 @@ String parameters expand environment variables, such as `${CIRCLE_SHA1}`, except
 - **Least Privilege**: Installs to user-owned directories by default, Go included, with no `sudo` usage anywhere in this orb. Everything runs as the job's user, on the executor.
 - **Integrity**: SHA-512 checksum validation of every tool, on by default and failing closed: a version this orb has no checksum for is refused before anything is downloaded, and a download that doesn't match is never installed. benchstat, which publishes no binaries, is built with a pinned and verified Go release and the binary checked against the table. See [Checksum Verification](#-checksum-verification).
 - **Fail closed**: a tool that can't complete fails the step even with `report_only`, and so do code that doesn't compile, a golangci-lint error it only logs, a Go too old for `go mod tidy -diff`, a platform Go can't build for and a `coverage_min` that can't be checked.
-- **Confidentiality**: No command needs a secret. `extra_args` and the lists are split without running anything in them, so a value that reached one through an environment variable, such as a branch name, can't run a command. Mirror URLs with credentials, a query or a fragment are refused before they can reach the log.
+- **Confidentiality**: No command needs a secret. `extra_args` and the lists are split without running anything in them, so a value that reached one through an environment variable, such as a branch name, can't run a command. Mirror URLs with credentials, a query or a fragment are refused before they can reach the log. The GitHub Actions pass inputs to the scripts as environment variables, never pasting them into a script, and pin the actions they use (`actions/cache`, `actions/upload-artifact`) to a commit SHA.
 - **Privacy**: No usage data of any kind is collected or shipped back to the orb developer.
 
 > [!IMPORTANT]
-> **Info for security teams:** see [Network Access](#-network-access) for every host the orb contacts, and what turns each off. Vulnerability scanning of Go code and binaries (govulncheck, gosec) is out of scope here: it is planned for a separate go-security-orb.
+> **Info for security teams:** see [Network Access](#-network-access) for every host the orb contacts, and what turns each off. Vulnerability scanning of Go code and binaries (govulncheck, gosec) is out of scope here: it is [go-security-orb](https://github.com/juburr/go-security-orb)'s.
 
 ## 💻 Supported Platforms
 
@@ -435,6 +516,8 @@ Linux executors on `x86_64` (amd64) and `aarch64`/`arm64` (arm64), including Cir
 The checks need Go 1.22 or newer (`mod_tidy` needs 1.23), bash 4 or newer, `jq`, `git` (for `generate_check` and `bench`'s `base_ref`), `awk`, `find`, `xargs`, `tar`, `gzip`, `curl` or `wget`, and the standard coreutils, including `mktemp`, `sha256sum` and `sha512sum`. `test` with `race` needs cgo and a C compiler. `cimg/go` has all of them.
 
 The cache is keyed by tool, version, executor architecture and home directory, so amd64 and arm64 jobs never share a cached download. On executors whose `PATH` doesn't already include `install_path` (for example, machine executors), `install` adds it for later steps through `BASH_ENV`.
+
+The [GitHub Actions](#-github-actions) run on GitHub-hosted `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64) runners, which CI covers, and on self-hosted Linux runners with the same tools.
 
 ## 🔐 Checksum Verification
 
@@ -469,12 +552,13 @@ Hosts to allow (HTTPS, port 443) when running on a locked-down, self-hosted runn
 | `dl.google.com` | `install` (`go`, and `benchstat` when the job's Go isn't the release that builds it) | Go release archives | `go_download_base_url` is set; benchstat comes from the cache |
 | `proxy.golang.org`, `sum.golang.org` | `install` (benchstat); every check that resolves your modules' dependencies | Go modules and their checksums, as Go itself fetches them | `GOPROXY` and `GOSUMDB` name your own (or `GOFLAGS=-mod=vendor`); the module cache already holds them |
 | `circleci-tasks-prod.s3.us-east-1.amazonaws.com` | The install commands with `caching: true` (the default), on CircleCI cloud with self-hosted runners | CircleCI's cache storage, used by the built-in `restore_cache` and `save_cache` steps (see the [runner FAQ](https://circleci.com/docs/guides/execution-runner/runner-faqs/#what-connectivity-is-required)) | `caching` is `false` |
+| GitHub's cache service: the hosts GitHub lists for [communication with GitHub](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners#communication-between-self-hosted-runners-and-github), on self-hosted runners | The install actions with `caching: "true"` (the default) | `actions/cache`, restoring and saving each tool's verified download | `caching` is `"false"` |
 
 The checks themselves contact nothing but what the Go toolchain does for your modules, which follows the job's `GOPROXY`, `GOSUMDB`, `GOPRIVATE` and `GOTOOLCHAIN`. `HTTPS_PROXY` and `NO_PROXY` apply to every tool.
 
 ## 🗺️ Not Yet Included
 
-- **Vulnerability and security scanning** (govulncheck, gosec, licence checks): those belong in go-security-orb, which is planned next, with run records for evidence.
+- **Vulnerability and security scanning** (govulncheck, gosec, licence checks): those belong in [go-security-orb](https://github.com/juburr/go-security-orb), with run records for evidence.
 - **`deadcode`** (whole-program unreachable functions) and **API compatibility checks** (apidiff, gorelease): golangci-lint's `unused` covers most dead code, and API checks matter mostly for shared libraries.
 - **Module and build caching**: use `circleci/go`'s caching commands, or `restore_cache`/`save_cache` on `$(go env GOMODCACHE)` and `$(go env GOCACHE)`.
 - **macOS and Windows executors**: `build` checks that code compiles for them from Linux.
@@ -485,7 +569,7 @@ This is an unofficial, community-maintained orb, and contributions are welcome! 
 
 - **Found a bug or have an idea?** [Open an issue](https://github.com/juburr/go-quality-orb/issues).
 - **Need a newer tool release?** Generate its checksums with `src/install/<tool>/install_hash.sh -v <version>`, paste them into the `sha512sums` table in that tool's `src/install/<tool>/install.sh`, update the default version in the tool's `install_<tool>` command and in `install`, and open a pull request. The script checks the download against what upstream publishes before printing anything. It needs bash 4 or newer, `curl`, `jq` and the standard coreutils, and for gofumpt `git` and a `go` too.
-- **Before opening a pull request**, run the checks CI runs. The tests run offline; `tests/commands_test.sh` needs Go and `jq`. `circleci orb validate` checks the packed orb against the CircleCI API, so it needs network access.
+- **Before opening a pull request**, run the checks CI runs. The tests run offline; `tests/commands_test.sh` needs Go and `jq`. `circleci orb validate` checks the packed orb against the CircleCI API, so it needs network access. CI also runs the actions on GitHub's runners, and a change to a command's parameters needs the same change to its action in `actions/`, which `tests/actions_test.sh` checks.
 
   ```bash
   yamllint .
@@ -509,5 +593,5 @@ Need the logo for a slide deck, blog post, or internal developer portal? PNGs wi
   <br>
   <sub>Clean code, calm releases. If this orb helps your team, a ⭐ helps others find it.</sub>
   <br>
-  <sub><a href="#go-quality-orb-for-circleci">Back to top ↑</a></sub>
+  <sub><a href="#go-quality-for-circleci-and-github-actions">Back to top ↑</a></sub>
 </div>

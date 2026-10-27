@@ -49,6 +49,16 @@ jobs:
       - run:
           name: Run wiring test
           command: bash tests/wiring_test.sh
+  # The GitHub Actions in actions/ against the commands they mirror, and the shared
+  # actions/run_script.sh.
+  test-actions:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Check the GitHub Actions against the orb's commands
+          command: bash tests/actions_test.sh
 
 workflows:
   lint-pack:
@@ -58,6 +68,8 @@ workflows:
       - test-env-subst:
           filters: *filters
       - test-commands:
+          filters: *filters
+      - test-actions:
           filters: *filters
       - orb-tools/lint:
           filters: *filters
@@ -77,5 +89,5 @@ workflows:
           pipeline_number: << pipeline.number >>
           vcs_type: << pipeline.project.type >>
           orb_name: go-quality-orb
-          requires: [test-install, test-env-subst, test-commands, orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check]
+          requires: [test-install, test-env-subst, test-commands, test-actions, orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check]
           filters: *filters

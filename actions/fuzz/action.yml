@@ -1,0 +1,131 @@
+name: Run Go fuzz tests
+description: >
+  Fuzzes each fuzz test (func FuzzXxx) in each module for fuzz_time, one at a
+  time, since go test -fuzz runs one fuzz test per package. An input a fuzz
+  test fails on is copied to <report_name>/<package dir>/testdata/fuzz, ready
+  to add to the repository as a regression test. The step fails when fuzzing
+  finds a failing input, unless report_only is true; it always fails when a
+  package doesn't build or fuzzing ends another way. Fuzzing takes fuzz_time
+  for every fuzz test, so name the ones to run with targets. The GitHub
+  Actions twin of the orb's fuzz command.
+author: juburr
+
+inputs:
+  extra_args:
+    description: >
+      More go test arguments, split like shell words. Nothing in them is
+      expanded or run. -run, -fuzz and -fuzztime are refused, since this
+      command sets them for each fuzz test.
+    default: ""
+  fuzz_time:
+    description: >
+      How long to fuzz each fuzz test (go test -fuzztime), such as 30s or 5m,
+      or a number of inputs, such as 10000x.
+    default: 30s
+  junit:
+    description: >
+      Also write JUnit XML, one test case per fuzz test, for a JUnit reader
+      such as a test report action.
+    default: "true"
+  modules:
+    description: >
+      The modules to check: directories that hold a go.mod, relative to
+      working_dir, separated by commas or spaces; or all, for every module in
+      working_dir and below it, skipping vendor and testdata directories and
+      those whose names start with "." or "_", as go ./... patterns do.
+    default: .
+  no_output_timeout:
+    description: >
+      CircleCI's no_output_timeout for this command's step, kept so the inputs
+      match the command. It has no effect on GitHub Actions; set
+      timeout-minutes on the job or step instead.
+    default: 10m
+  output_dir:
+    description: >
+      Absolute path of the directory to write the reports into. Environment
+      variables are not expanded, since the path is also passed to the
+      artifact upload.
+    default: /tmp/go-quality-reports
+  packages:
+    description: >
+      The package patterns to fuzz in each module, separated by commas or
+      spaces.
+    default: ./...
+  parallel:
+    description: >
+      How many fuzzing processes to run at once (go test -parallel). Empty
+      uses GOMAXPROCS.
+    default: ""
+  report_name:
+    description: >
+      The reports' file name, without extension: <report_name>/<package
+      dir>/<FuzzTest>.log and testdata/fuzz, and junit/<report_name>.xml. Give
+      each run of this command in a job its own.
+    default: go-fuzz
+  report_only:
+    description: >
+      Report findings without failing the step, to adopt the check gradually.
+      A package that doesn't build still fails it.
+    default: "false"
+  store_artifacts:
+    description: >
+      Upload output_dir as a workflow artifact, named
+      go-quality-reports-<report_name> and a random suffix, including when the
+      step fails.
+    default: "true"
+  tags:
+    description: >
+      Build tags (go -tags), separated by commas.
+    default: ""
+  targets:
+    description: >
+      Only fuzz the fuzz tests whose names match this regular expression, such
+      as ^FuzzParse. Empty fuzzes all of them.
+    default: ""
+  working_dir:
+    description: >
+      Directory to run in: modules are relative to it.
+    default: .
+
+runs:
+  using: composite
+  steps:
+    # Artifact names must be unique in a workflow run, and the same command
+    # can run in several jobs or matrix legs, so the name ends in a random
+    # suffix.
+    - name: Name the reports artifact
+      id: artifact
+      if: (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      shell: bash
+      env:
+        REPORT_NAME: ${{ inputs.report_name }}
+      run: |
+        if [[ ! "${REPORT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            REPORT_NAME=reports
+        fi
+        printf 'name=go-quality-reports-%s-%s\n' "${REPORT_NAME}" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')" >> "${GITHUB_OUTPUT}"
+    - name: go test -fuzz
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        PARAM_EXTRA_ARGS: ${{ inputs.extra_args }}
+        PARAM_FUZZ_TIME: ${{ inputs.fuzz_time }}
+        PARAM_JUNIT: ${{ inputs.junit }}
+        PARAM_MODULES: ${{ inputs.modules }}
+        PARAM_OUTPUT_DIR: ${{ inputs.output_dir }}
+        PARAM_PACKAGES: ${{ inputs.packages }}
+        PARAM_PARALLEL: ${{ inputs.parallel }}
+        PARAM_REPORT_NAME: ${{ inputs.report_name }}
+        PARAM_REPORT_ONLY: ${{ inputs.report_only }}
+        PARAM_TAGS: ${{ inputs.tags }}
+        PARAM_TARGETS: ${{ inputs.targets }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/fuzz.sh"
+        "SCRIPT_GO_QUALITY_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/go_quality.sh"
+    - name: Upload the reports
+      if: always() && (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.output_dir }}
+        if-no-files-found: ignore
