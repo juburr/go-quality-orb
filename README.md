@@ -116,7 +116,7 @@ Add the orb, install the tools, check the code. Copy this into `.circleci/config
 version: 2.1
 
 orbs:
-  go-quality: juburr/go-quality-orb@0.2.0
+  go-quality: juburr/go-quality-orb@0.2.1
 
 jobs:
   quality:
@@ -159,18 +159,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: juburr/go-quality-orb/actions/install@v0.2.0
+      - uses: juburr/go-quality-orb/actions/install@v0.2.1
         with:
           tools: go golangci-lint gotestsum
-      - uses: juburr/go-quality-orb/actions/fmt@v0.2.0
-      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.2.0
-      - uses: juburr/go-quality-orb/actions/vet@v0.2.0
-      - uses: juburr/go-quality-orb/actions/lint@v0.2.0
-      - uses: juburr/go-quality-orb/actions/generate_check@v0.2.0
-      - uses: juburr/go-quality-orb/actions/test@v0.2.0
+      - uses: juburr/go-quality-orb/actions/fmt@v0.2.1
+      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.2.1
+      - uses: juburr/go-quality-orb/actions/vet@v0.2.1
+      - uses: juburr/go-quality-orb/actions/lint@v0.2.1
+      - uses: juburr/go-quality-orb/actions/generate_check@v0.2.1
+      - uses: juburr/go-quality-orb/actions/test@v0.2.1
         with:
           race: "true"
-      - uses: juburr/go-quality-orb/actions/build@v0.2.0
+      - uses: juburr/go-quality-orb/actions/build@v0.2.1
         with:
           platforms: linux/amd64 linux/arm64
 ```
@@ -441,22 +441,22 @@ Each of the orb's commands has a GitHub Action of the same name. The actions run
 
 | Action | Orb command |
 | --- | --- |
-| `juburr/go-quality-orb/actions/install@v0.2.0` | [`go-quality/install`](#go-qualityinstall) |
-| `juburr/go-quality-orb/actions/install_go@v0.2.0`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
-| `juburr/go-quality-orb/actions/fmt@v0.2.0` | [`go-quality/fmt`](#go-qualityfmt) |
-| `juburr/go-quality-orb/actions/mod_tidy@v0.2.0` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
-| `juburr/go-quality-orb/actions/vet@v0.2.0` | [`go-quality/vet`](#go-qualityvet) |
-| `juburr/go-quality-orb/actions/lint@v0.2.0` | [`go-quality/lint`](#go-qualitylint) |
-| `juburr/go-quality-orb/actions/generate_check@v0.2.0` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
-| `juburr/go-quality-orb/actions/test@v0.2.0` | [`go-quality/test`](#go-qualitytest) |
-| `juburr/go-quality-orb/actions/fuzz@v0.2.0` | [`go-quality/fuzz`](#go-qualityfuzz) |
-| `juburr/go-quality-orb/actions/bench@v0.2.0` | [`go-quality/bench`](#go-qualitybench) |
-| `juburr/go-quality-orb/actions/build@v0.2.0` | [`go-quality/build`](#go-qualitybuild) |
+| `juburr/go-quality-orb/actions/install@v0.2.1` | [`go-quality/install`](#go-qualityinstall) |
+| `juburr/go-quality-orb/actions/install_go@v0.2.1`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
+| `juburr/go-quality-orb/actions/fmt@v0.2.1` | [`go-quality/fmt`](#go-qualityfmt) |
+| `juburr/go-quality-orb/actions/mod_tidy@v0.2.1` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
+| `juburr/go-quality-orb/actions/vet@v0.2.1` | [`go-quality/vet`](#go-qualityvet) |
+| `juburr/go-quality-orb/actions/lint@v0.2.1` | [`go-quality/lint`](#go-qualitylint) |
+| `juburr/go-quality-orb/actions/generate_check@v0.2.1` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
+| `juburr/go-quality-orb/actions/test@v0.2.1` | [`go-quality/test`](#go-qualitytest) |
+| `juburr/go-quality-orb/actions/fuzz@v0.2.1` | [`go-quality/fuzz`](#go-qualityfuzz) |
+| `juburr/go-quality-orb/actions/bench@v0.2.1` | [`go-quality/bench`](#go-qualitybench) |
+| `juburr/go-quality-orb/actions/build@v0.2.1` | [`go-quality/build`](#go-qualitybuild) |
 
 To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissions: security-events: write`), point the upload at the report:
 
 ```yaml
-      - uses: juburr/go-quality-orb/actions/lint@v0.2.0
+      - uses: juburr/go-quality-orb/actions/lint@v0.2.1
         with:
           report_only: "true"
       - uses: github/codeql-action/upload-sarif@v4
@@ -467,7 +467,7 @@ To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissi
 
 How they differ from the orb's commands:
 
-- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.2.0`.
+- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.1`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.2.1`.
 - **Inputs are strings.** Write booleans and numbers quoted, such as `report_only: "true"` or `coverage_min: "80"`. The scripts check every boolean and enum themselves.
 - **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `go_version: ${{ vars.GO_RELEASE }}`.
 - **Artifacts.** A command that stores artifacts uploads `output_dir` with [`actions/upload-artifact`](https://github.com/actions/upload-artifact), even when the step fails, as an artifact named `go-quality-reports-<report_name>-` and a random suffix, since artifact names must be unique in a workflow run. There is no Tests tab: JUnit files are in `output_dir/junit/`, for any JUnit report action.
