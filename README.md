@@ -116,7 +116,7 @@ Add the orb, install the tools, check the code. Copy this into `.circleci/config
 version: 2.1
 
 orbs:
-  go-quality: juburr/go-quality-orb@0.2.1
+  go-quality: juburr/go-quality-orb@0.3.0
 
 jobs:
   quality:
@@ -159,18 +159,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: juburr/go-quality-orb/actions/install@v0.2.1
+      - uses: juburr/go-quality-orb/actions/install@v0.3.0
         with:
           tools: go golangci-lint gotestsum
-      - uses: juburr/go-quality-orb/actions/fmt@v0.2.1
-      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.2.1
-      - uses: juburr/go-quality-orb/actions/vet@v0.2.1
-      - uses: juburr/go-quality-orb/actions/lint@v0.2.1
-      - uses: juburr/go-quality-orb/actions/generate_check@v0.2.1
-      - uses: juburr/go-quality-orb/actions/test@v0.2.1
+      - uses: juburr/go-quality-orb/actions/fmt@v0.3.0
+      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.3.0
+      - uses: juburr/go-quality-orb/actions/vet@v0.3.0
+      - uses: juburr/go-quality-orb/actions/lint@v0.3.0
+      - uses: juburr/go-quality-orb/actions/generate_check@v0.3.0
+      - uses: juburr/go-quality-orb/actions/test@v0.3.0
         with:
           race: "true"
-      - uses: juburr/go-quality-orb/actions/build@v0.2.1
+      - uses: juburr/go-quality-orb/actions/build@v0.3.0
         with:
           platforms: linux/amd64 linux/arm64
 ```
@@ -277,6 +277,26 @@ With `split_tests` and a parallelism above 1, each node runs its share of the pa
 
 `go` installs the official release archive into `$HOME/sdk/go`, verified against this orb's table and without root, and puts it first on the `PATH`, for machine executors and images without Go. The `go` command still switches to a newer release when a `go.mod`'s `go` or `toolchain` line asks for one, as `GOTOOLCHAIN` allows (Go checks those downloads against its checksum database); set `GOTOOLCHAIN=local` in the job to stop it.
 
+### Use Private Modules
+
+`configure_modules` sets up where go fetches modules from, and writes credentials for one host to `~/.netrc` (mode 0600), for every later step. Run it first. Through a module proxy, such as Artifactory:
+
+```yaml
+- go-quality/configure_modules:
+    goproxy: https://artifactory.example.com/artifactory/api/go/go-virtual
+    # Your own modules, which the public checksum database can't know.
+    gonosumdb: github.com/my-org/*
+    host: artifactory.example.com
+    # Environment variables, such as from a context.
+    username: JF_USER
+    password: JF_ACCESS_TOKEN
+- go-quality/install:
+    tools: golangci-lint gotestsum
+- go-quality/test
+```
+
+Or straight from your organization's repositories, with `goprivate: github.com/my-org/*` and `host: github.com`. Use `gonosumdb`, not `goprivate`, for private modules a proxy serves: `GOPRIVATE` also sends go straight to their hosts, past the proxy. A pattern that matches public modules, such as `github.com/*`, fails the step, since go would fetch every module it matches without checking it against the checksum database. The same command is in [go-security-orb](https://github.com/juburr/go-security-orb), whose `mod_verify` also checks that the job's settings don't turn checksum verification off.
+
 ### Use gofumpt
 
 ```yaml
@@ -302,6 +322,21 @@ These parameters mean the same in every check:
 | `tags` | *(empty)* | Build tags, separated by commas (`vet`, `generate_check`, `test`, `fuzz`, `bench`, `build`). |
 | `extra_args` | *(empty)* | More arguments for the tool, split like shell words: nothing in them is expanded or run. Arguments a command sets itself are refused. |
 | `output_dir`, `report_name`, `junit`, `report_only`, `store_artifacts` | | See [Reports](#-reports). |
+
+### `go-quality/configure_modules`
+
+Sets up where go fetches modules from, for every later step, and writes credentials for one host to `~/.netrc` (or the file `NETRC` names), mode 0600. go reads them there for a proxy and for modules it fetches straight from their host, and git reads them when go fetches with it. The entry goes first in the file, since go and git use the first entry for a host, and replaces the one an earlier run wrote. Nothing changes unless every parameter is valid: a pattern that matches public modules, credentials in a proxy URL, a proxy over plain HTTP to another machine, `GOSUMDB=off`, or a credential variable that is unset fails the step first. It doesn't need Go, so it can run before `install`. See [Use Private Modules](#use-private-modules).
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `goproxy` | *(empty)* | `GOPROXY`: proxy URLs, `direct` and `off`, separated by commas or pipes. Leave out `direct` to make every module come through the proxy. Plain HTTP is allowed only to this machine. |
+| `gonosumdb` | *(empty)* | `GONOSUMDB`: your own module path patterns, separated by commas, which go fetches through the proxy without asking the public checksum database. |
+| `goprivate` | *(empty)* | `GOPRIVATE`: module path patterns, separated by commas, which go fetches straight from their hosts, without the proxy or the checksum database. |
+| `gosumdb` | *(empty)* | `GOSUMDB`: the checksum database's name, with an optional `+key`, and an optional `https://` URL to reach it through, such as `sum.golang.org https://artifactory.example.com/artifactory/api/go/gosumdb`. `off` is refused. |
+| `host` | *(empty)* | The host, with an optional port, to write the credentials for. Empty writes none. |
+| `username`, `password` | `PRIVATE_MODULES_USERNAME`, `PRIVATE_MODULES_TOKEN` | The environment variables that hold the credentials for `host`. They never reach a command line or the log. |
+
+An empty setting leaves the job's own value; at least one parameter must be set.
 
 ### `go-quality/install`
 
@@ -441,22 +476,23 @@ Each of the orb's commands has a GitHub Action of the same name. The actions run
 
 | Action | Orb command |
 | --- | --- |
-| `juburr/go-quality-orb/actions/install@v0.2.1` | [`go-quality/install`](#go-qualityinstall) |
-| `juburr/go-quality-orb/actions/install_go@v0.2.1`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
-| `juburr/go-quality-orb/actions/fmt@v0.2.1` | [`go-quality/fmt`](#go-qualityfmt) |
-| `juburr/go-quality-orb/actions/mod_tidy@v0.2.1` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
-| `juburr/go-quality-orb/actions/vet@v0.2.1` | [`go-quality/vet`](#go-qualityvet) |
-| `juburr/go-quality-orb/actions/lint@v0.2.1` | [`go-quality/lint`](#go-qualitylint) |
-| `juburr/go-quality-orb/actions/generate_check@v0.2.1` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
-| `juburr/go-quality-orb/actions/test@v0.2.1` | [`go-quality/test`](#go-qualitytest) |
-| `juburr/go-quality-orb/actions/fuzz@v0.2.1` | [`go-quality/fuzz`](#go-qualityfuzz) |
-| `juburr/go-quality-orb/actions/bench@v0.2.1` | [`go-quality/bench`](#go-qualitybench) |
-| `juburr/go-quality-orb/actions/build@v0.2.1` | [`go-quality/build`](#go-qualitybuild) |
+| `juburr/go-quality-orb/actions/configure_modules@v0.3.0` | [`go-quality/configure_modules`](#go-qualityconfigure_modules) |
+| `juburr/go-quality-orb/actions/install@v0.3.0` | [`go-quality/install`](#go-qualityinstall) |
+| `juburr/go-quality-orb/actions/install_go@v0.3.0`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
+| `juburr/go-quality-orb/actions/fmt@v0.3.0` | [`go-quality/fmt`](#go-qualityfmt) |
+| `juburr/go-quality-orb/actions/mod_tidy@v0.3.0` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
+| `juburr/go-quality-orb/actions/vet@v0.3.0` | [`go-quality/vet`](#go-qualityvet) |
+| `juburr/go-quality-orb/actions/lint@v0.3.0` | [`go-quality/lint`](#go-qualitylint) |
+| `juburr/go-quality-orb/actions/generate_check@v0.3.0` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
+| `juburr/go-quality-orb/actions/test@v0.3.0` | [`go-quality/test`](#go-qualitytest) |
+| `juburr/go-quality-orb/actions/fuzz@v0.3.0` | [`go-quality/fuzz`](#go-qualityfuzz) |
+| `juburr/go-quality-orb/actions/bench@v0.3.0` | [`go-quality/bench`](#go-qualitybench) |
+| `juburr/go-quality-orb/actions/build@v0.3.0` | [`go-quality/build`](#go-qualitybuild) |
 
 To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissions: security-events: write`), point the upload at the report:
 
 ```yaml
-      - uses: juburr/go-quality-orb/actions/lint@v0.2.1
+      - uses: juburr/go-quality-orb/actions/lint@v0.3.0
         with:
           report_only: "true"
       - uses: github/codeql-action/upload-sarif@v4
@@ -467,14 +503,14 @@ To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissi
 
 How they differ from the orb's commands:
 
-- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.1`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.2.1`.
+- **Versions.** An action is referenced by the repository's release tag, such as `v0.3.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.3.0`.
 - **Inputs are strings.** Write booleans and numbers quoted, such as `report_only: "true"` or `coverage_min: "80"`. The scripts check every boolean and enum themselves.
-- **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `go_version: ${{ vars.GO_RELEASE }}`.
+- **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `go_version: ${{ vars.GO_RELEASE }}`. For `configure_modules`' credentials, set the variables `username` and `password` name from secrets, at the job or step level.
 - **Artifacts.** A command that stores artifacts uploads `output_dir` with [`actions/upload-artifact`](https://github.com/actions/upload-artifact), even when the step fails, as an artifact named `go-quality-reports-<report_name>-` and a random suffix, since artifact names must be unique in a workflow run. There is no Tests tab: JUnit files are in `output_dir/junit/`, for any JUnit report action.
 - **`split_tests` and `no_output_timeout`** are CircleCI's and have no effect on GitHub. To spread tests over runners, give each leg of a matrix its own `packages`; for a time limit, set `timeout-minutes` on the job or step.
 - **`bench`'s `base_ref`** needs that commit in the checkout. `actions/checkout` fetches one commit by default, so set `fetch-depth: 0` (or deep enough) to compare with `main`.
 - **Caching.** `caching` stores each tool's verified download (benchstat's verified build) with [`actions/cache`](https://github.com/actions/cache), with the same key ingredients as the orb. The cache is restored before the install and saved right after it, and what it restores is verified again. It counts toward the repository's GitHub Actions cache storage.
-- **Exports.** What an install exports to later steps (`PATH` entries, `GOROOT`) is passed on through `GITHUB_PATH` and `GITHUB_ENV`.
+- **Exports.** What a command exports to later steps (`PATH` entries, `GOROOT`, and `configure_modules`' `GOPROXY`, `GONOSUMDB`, `GOPRIVATE` and `GOSUMDB`) is passed on through `GITHUB_PATH` and `GITHUB_ENV`.
 - **Runners.** CI installs every tool on GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners, once from the cache with the download hosts blocked, and runs every check on the clean and dirty fixtures there, as on CircleCI.
 
 The actions are composite actions in [`actions/`](actions), next to the orb's source. Each passes its inputs to the orb's script as environment variables, never pasting them into a script, and [`actions/run_script.sh`](actions/run_script.sh) gives the script what CircleCI would: a `BASH_ENV` file for the values it hands to later steps, which it then passes on through `GITHUB_PATH` and `GITHUB_ENV`.
@@ -503,7 +539,7 @@ The actions are composite actions in [`actions/`](actions), next to the orb's so
 - **Least Privilege**: Installs to user-owned directories by default, Go included, with no `sudo` usage anywhere in this orb. Everything runs as the job's user, on the executor.
 - **Integrity**: SHA-512 checksum validation of every tool, on by default and failing closed: a version this orb has no checksum for is refused before anything is downloaded, and a download that doesn't match is never installed. benchstat, which publishes no binaries, is built with a pinned and verified Go release and the binary checked against the table. See [Checksum Verification](#-checksum-verification).
 - **Fail closed**: a tool that can't complete fails the step even with `report_only`, and so do code that doesn't compile, a golangci-lint error it only logs, a Go too old for `go mod tidy -diff`, a platform Go can't build for and a `coverage_min` that can't be checked.
-- **Confidentiality**: No command needs a secret. `extra_args` and the lists are split without running anything in them, so a value that reached one through an environment variable, such as a branch name, can't run a command. Mirror URLs with credentials, a query or a fragment are refused before they can reach the log. The GitHub Actions pass inputs to the scripts as environment variables, never pasting them into a script, and pin the actions they use (`actions/cache`, `actions/upload-artifact`) to a commit SHA.
+- **Confidentiality**: The only secrets are `configure_modules`' module credentials, read from environment variables, never put on a command line or in the log, and written to `~/.netrc` with mode 0600. `extra_args` and the lists are split without running anything in them, so a value that reached one through an environment variable, such as a branch name, can't run a command. Mirror URLs with credentials, a query or a fragment are refused before they can reach the log. The GitHub Actions pass inputs to the scripts as environment variables, never pasting them into a script, and pin the actions they use (`actions/cache`, `actions/upload-artifact`) to a commit SHA.
 - **Privacy**: No usage data of any kind is collected or shipped back to the orb developer.
 
 > [!IMPORTANT]
@@ -550,7 +586,7 @@ Hosts to allow (HTTPS, port 443) when running on a locked-down, self-hosted runn
 | `github.com` | `install` (golangci-lint, gotestsum, gofumpt) | Release downloads | `download_base_url` is set |
 | `release-assets.githubusercontent.com`, `objects.githubusercontent.com` | `install`, for the same tools | Where GitHub redirects release downloads | `download_base_url` is set |
 | `dl.google.com` | `install` (`go`, and `benchstat` when the job's Go isn't the release that builds it) | Go release archives | `go_download_base_url` is set; benchstat comes from the cache |
-| `proxy.golang.org`, `sum.golang.org` | `install` (benchstat); every check that resolves your modules' dependencies | Go modules and their checksums, as Go itself fetches them | `GOPROXY` and `GOSUMDB` name your own (or `GOFLAGS=-mod=vendor`); the module cache already holds them |
+| `proxy.golang.org`, `sum.golang.org` | `install` (benchstat); every check that resolves your modules' dependencies | Go modules and their checksums, as Go itself fetches them | `GOPROXY` and `GOSUMDB` name your own, such as with `configure_modules` (or `GOFLAGS=-mod=vendor`); the module cache already holds them |
 | `circleci-tasks-prod.s3.us-east-1.amazonaws.com` | The install commands with `caching: true` (the default), on CircleCI cloud with self-hosted runners | CircleCI's cache storage, used by the built-in `restore_cache` and `save_cache` steps (see the [runner FAQ](https://circleci.com/docs/guides/execution-runner/runner-faqs/#what-connectivity-is-required)) | `caching` is `false` |
 | GitHub's cache service: the hosts GitHub lists for [communication with GitHub](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners#communication-between-self-hosted-runners-and-github), on self-hosted runners | The install actions with `caching: "true"` (the default) | `actions/cache`, restoring and saving each tool's verified download | `caching` is `"false"` |
 

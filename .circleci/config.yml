@@ -47,6 +47,9 @@ jobs:
           name: Run command tests
           command: bash tests/commands_test.sh
       - run:
+          name: Run configure_modules tests
+          command: bash tests/configure_modules_test.sh
+      - run:
           name: Run wiring test
           command: bash tests/wiring_test.sh
   # The GitHub Actions in actions/ against the commands they mirror, and the shared
