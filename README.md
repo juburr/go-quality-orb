@@ -116,7 +116,7 @@ Add the orb, install the tools, check the code. Copy this into `.circleci/config
 version: 2.1
 
 orbs:
-  go-quality: juburr/go-quality-orb@0.3.0
+  go-quality: juburr/go-quality-orb@0.4.0
 
 jobs:
   quality:
@@ -159,18 +159,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: juburr/go-quality-orb/actions/install@v0.3.0
+      - uses: juburr/go-quality-orb/actions/install@v0.4.0
         with:
           tools: go golangci-lint gotestsum
-      - uses: juburr/go-quality-orb/actions/fmt@v0.3.0
-      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.3.0
-      - uses: juburr/go-quality-orb/actions/vet@v0.3.0
-      - uses: juburr/go-quality-orb/actions/lint@v0.3.0
-      - uses: juburr/go-quality-orb/actions/generate_check@v0.3.0
-      - uses: juburr/go-quality-orb/actions/test@v0.3.0
+      - uses: juburr/go-quality-orb/actions/fmt@v0.4.0
+      - uses: juburr/go-quality-orb/actions/mod_tidy@v0.4.0
+      - uses: juburr/go-quality-orb/actions/vet@v0.4.0
+      - uses: juburr/go-quality-orb/actions/lint@v0.4.0
+      - uses: juburr/go-quality-orb/actions/generate_check@v0.4.0
+      - uses: juburr/go-quality-orb/actions/test@v0.4.0
         with:
           race: "true"
-      - uses: juburr/go-quality-orb/actions/build@v0.3.0
+      - uses: juburr/go-quality-orb/actions/build@v0.4.0
         with:
           platforms: linux/amd64 linux/arm64
 ```
@@ -350,7 +350,7 @@ Installs the tools named in `tools`, each verified against the orb's checksum ta
 | `go_install_path` | `$HOME/sdk/go` | Absolute path of the Go installation (its `GOROOT`). It must be missing, hold no files, or be a Go installation `install_go` made before, which it replaces. Its `bin` directory is put first on the `PATH`. |
 | `verify_checksums` | `strict` | `strict`, `known_versions` or `false`, for every tool. See [Checksum Verification](#-checksum-verification). |
 | `caching` | `true` | Cache each tool's verified download (benchstat's verified build) between jobs, keyed by tool, version, CPU architecture and home directory. A cached file is verified again before it is used. |
-| `download_base_url` | *(empty)* | An `https://` mirror of GitHub releases, for golangci-lint, gotestsum and gofumpt, in place of `https://github.com`, serving the same paths. What it serves is still verified. Credentials (`user:password@`), a query and a fragment are refused, since they would show in the log. |
+| `download_base_url` | *(empty)* | An `https://` mirror of GitHub releases, for golangci-lint, gotestsum and gofumpt, in place of `https://github.com`, serving the same paths. What it serves is still verified. Credentials (`user:password@`), a query and a fragment are refused, since they would show in the log. A mirror that needs a login gets the `.netrc` entry for its host; see [Mirrors That Need a Login](#-mirrors-that-need-a-login). |
 | `go_download_base_url` | *(empty)* | The same, as a mirror of `https://dl.google.com/go`, for Go's release archive and the Go release that builds benchstat. |
 
 ### `go-quality/install_<tool>`
@@ -476,23 +476,23 @@ Each of the orb's commands has a GitHub Action of the same name. The actions run
 
 | Action | Orb command |
 | --- | --- |
-| `juburr/go-quality-orb/actions/configure_modules@v0.3.0` | [`go-quality/configure_modules`](#go-qualityconfigure_modules) |
-| `juburr/go-quality-orb/actions/install@v0.3.0` | [`go-quality/install`](#go-qualityinstall) |
-| `juburr/go-quality-orb/actions/install_go@v0.3.0`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
-| `juburr/go-quality-orb/actions/fmt@v0.3.0` | [`go-quality/fmt`](#go-qualityfmt) |
-| `juburr/go-quality-orb/actions/mod_tidy@v0.3.0` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
-| `juburr/go-quality-orb/actions/vet@v0.3.0` | [`go-quality/vet`](#go-qualityvet) |
-| `juburr/go-quality-orb/actions/lint@v0.3.0` | [`go-quality/lint`](#go-qualitylint) |
-| `juburr/go-quality-orb/actions/generate_check@v0.3.0` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
-| `juburr/go-quality-orb/actions/test@v0.3.0` | [`go-quality/test`](#go-qualitytest) |
-| `juburr/go-quality-orb/actions/fuzz@v0.3.0` | [`go-quality/fuzz`](#go-qualityfuzz) |
-| `juburr/go-quality-orb/actions/bench@v0.3.0` | [`go-quality/bench`](#go-qualitybench) |
-| `juburr/go-quality-orb/actions/build@v0.3.0` | [`go-quality/build`](#go-qualitybuild) |
+| `juburr/go-quality-orb/actions/configure_modules@v0.4.0` | [`go-quality/configure_modules`](#go-qualityconfigure_modules) |
+| `juburr/go-quality-orb/actions/install@v0.4.0` | [`go-quality/install`](#go-qualityinstall) |
+| `juburr/go-quality-orb/actions/install_go@v0.4.0`, `install_golangci_lint`, `install_gotestsum`, `install_gofumpt`, `install_benchstat` | [`go-quality/install_<tool>`](#go-qualityinstall_tool) |
+| `juburr/go-quality-orb/actions/fmt@v0.4.0` | [`go-quality/fmt`](#go-qualityfmt) |
+| `juburr/go-quality-orb/actions/mod_tidy@v0.4.0` | [`go-quality/mod_tidy`](#go-qualitymod_tidy) |
+| `juburr/go-quality-orb/actions/vet@v0.4.0` | [`go-quality/vet`](#go-qualityvet) |
+| `juburr/go-quality-orb/actions/lint@v0.4.0` | [`go-quality/lint`](#go-qualitylint) |
+| `juburr/go-quality-orb/actions/generate_check@v0.4.0` | [`go-quality/generate_check`](#go-qualitygenerate_check) |
+| `juburr/go-quality-orb/actions/test@v0.4.0` | [`go-quality/test`](#go-qualitytest) |
+| `juburr/go-quality-orb/actions/fuzz@v0.4.0` | [`go-quality/fuzz`](#go-qualityfuzz) |
+| `juburr/go-quality-orb/actions/bench@v0.4.0` | [`go-quality/bench`](#go-qualitybench) |
+| `juburr/go-quality-orb/actions/build@v0.4.0` | [`go-quality/build`](#go-qualitybuild) |
 
 To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissions: security-events: write`), point the upload at the report:
 
 ```yaml
-      - uses: juburr/go-quality-orb/actions/lint@v0.3.0
+      - uses: juburr/go-quality-orb/actions/lint@v0.4.0
         with:
           report_only: "true"
       - uses: github/codeql-action/upload-sarif@v4
@@ -503,7 +503,7 @@ To upload golangci-lint's SARIF to GitHub code scanning (the job needs `permissi
 
 How they differ from the orb's commands:
 
-- **Versions.** An action is referenced by the repository's release tag, such as `v0.3.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.3.0`.
+- **Versions.** An action is referenced by the repository's release tag, such as `v0.4.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/go-quality-orb/actions/lint@<sha> # v0.4.0`.
 - **Inputs are strings.** Write booleans and numbers quoted, such as `report_only: "true"` or `coverage_min: "80"`. The scripts check every boolean and enum themselves.
 - **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `go_version: ${{ vars.GO_RELEASE }}`. For `configure_modules`' credentials, set the variables `username` and `password` name from secrets, at the job or step level.
 - **Artifacts.** A command that stores artifacts uploads `output_dir` with [`actions/upload-artifact`](https://github.com/actions/upload-artifact), even when the step fails, as an artifact named `go-quality-reports-<report_name>-` and a random suffix, since artifact names must be unique in a workflow run. There is no Tests tab: JUnit files are in `output_dir/junit/`, for any JUnit report action.
@@ -554,6 +554,31 @@ The checks need Go 1.22 or newer (`mod_tidy` needs 1.23), bash 4 or newer, `jq`,
 The cache is keyed by tool, version, executor architecture and home directory, so amd64 and arm64 jobs never share a cached download. On executors whose `PATH` doesn't already include `install_path` (for example, machine executors), `install` adds it for later steps through `BASH_ENV`.
 
 The [GitHub Actions](#-github-actions) run on GitHub-hosted `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64) runners, which CI covers, and on self-hosted Linux runners with the same tools.
+
+## 🔑 Mirrors That Need a Login
+
+`download_base_url` points the install at an internal mirror, such as an Artifactory remote repository. When the mirror needs a login, the install takes it from the entry for the mirror's host in the `.netrc` file (`NETRC`, or `~/.netrc`), which an earlier step writes, such as from a context's variables. Artifactory takes an access token as the password.
+
+```yaml
+- go-quality/configure_modules:
+    host: artifactory.example.com
+    username: ARTIFACTORY_USER
+    password: ARTIFACTORY_TOKEN
+- go-quality/install:
+    download_base_url: https://artifactory.example.com/artifactory/github-releases
+```
+
+`configure_modules` writes the entry, and go and git use it too.
+
+How the login is kept to the mirror:
+
+- **One entry, in a private file.** The install copies the first complete entry for the mirror's host, alone, into a file only the job's user can read, and gives that file to curl. curl never reads the rest of your `.netrc`: not a `default` entry, not an entry without a password (curl 7.76.0 to 8.11.1 could send a password on to a host the server redirects to, CVE-2024-11053 and CVE-2025-0167, when the `.netrc` held either), and not a token for another host, such as `github.com`.
+- **Only for the mirror.** curl gets the file only for URLs under the mirror. Downloads from anywhere else get no login.
+- **Never past a redirect.** When the mirror redirects a download to another host, such as the cloud storage an Artifactory keeps its files in, that host gets no login, even when a `~/.curlrc` says `location-trusted`.
+- **curl only.** wget reads every entry in `~/.netrc` and can't be limited to one, so an install that would send a mirror login with wget fails and asks for curl.
+- **Out of the log.** The log names the `.netrc` file and the host, never the login. A `.netrc` other users can read is reported.
+
+An entry the install can't use as curl would, one without a login or password or with a quoted value, is reported, and the mirror is then asked without a login. A mirror that refuses a download without one is reported with the entry it needs.
 
 ## 🔐 Checksum Verification
 
